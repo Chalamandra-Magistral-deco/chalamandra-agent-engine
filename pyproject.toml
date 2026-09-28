@@ -12,4 +12,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["adapters*", "pipeline*", "registry*", "router*", "telemetry*", "config*", "security*", "core*"]
+include = ["dynamics*", "adapters*", "pipeline*", "registry*", "router*", "telemetry*", "config*", "security*", "core*"]
