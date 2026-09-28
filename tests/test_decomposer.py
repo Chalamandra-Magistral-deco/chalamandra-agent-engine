@@ -1,7 +1,8 @@
-"""Unit test determinista del Task Decomposer."""
+"""Tests deterministas del Task Decomposer."""
 
-import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from core.decomposer import Decomposer
 
@@ -27,7 +28,8 @@ class FakeOrchestrator:
         )
 
 
-async def main() -> None:
+@pytest.mark.asyncio
+async def test_decompose():
     dec = Decomposer(FakeOrchestrator())
 
     task = (
@@ -37,23 +39,7 @@ async def main() -> None:
 
     subtasks = await dec.decompose(task)
 
-    print(f"SUBTASKS: {len(subtasks)}")
-
-    for s in subtasks:
-        print(
-            f"  [{s.id}] "
-            f"skill={s.skill:12} "
-            f"deps={s.depends_on}"
-        )
-        print(f"       {s.description}")
-
     assert len(subtasks) == 2
     assert subtasks[0].skill == "analysis"
     assert subtasks[1].skill == "analysis"
     assert subtasks[1].depends_on == [subtasks[0].id]
-
-    print("\nTEST DECOMPOSER OK")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

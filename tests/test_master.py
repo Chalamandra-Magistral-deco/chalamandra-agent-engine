@@ -1,37 +1,34 @@
-"""Smoke test del Control Plane Master."""
+"""Tests del Control Plane Master."""
 
-import asyncio
+import pytest
 
 from core.master import Master
 
 
-async def main() -> None:
+@pytest.mark.asyncio
+async def test_master_inspect():
     master = Master()
-
-    print("===== MASTER INSPECT =====")
 
     state = master.inspect()
 
-    print("MODELS:", state["models"])
-    print("TOOLS:", state["tools"])
-    print("CAPABILITIES:", state["capabilities"])
-
     assert "ollama" in state["models"]
     assert "dynamics" in state["tools"]
+    assert "analysis" in state["capabilities"]["ollama"]["skills_verified"]
+    assert "reasoning" in state["capabilities"]["ollama"]["skills_verified"]
 
-    print()
-    print("===== ROUTE REASONING =====")
+
+def test_master_route_reasoning():
+    master = Master()
 
     route = master.route_skill("reasoning")
-
-    print("MODELS:", route["models"])
-    print("TOOLS:", route["tools"])
 
     assert "ollama" in route["models"]
     assert "dynamics" in route["tools"]
 
-    print()
-    print("===== EXECUTE DYNAMICS TOOL =====")
+
+@pytest.mark.asyncio
+async def test_master_execute_dynamics():
+    master = Master()
 
     result = await master.execute_tool(
         "dynamics",
@@ -44,17 +41,7 @@ async def main() -> None:
         dt=0.001,
     )
 
-    print("STATUS:", result["status"])
-    print("KEYS:", list(result.keys()))
-
     assert result["status"] == "ok"
     assert "equilibrium" in result
     assert "hopf" in result
     assert "analysis" in result
-
-    print()
-    print("TEST MASTER OK")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
