@@ -121,6 +121,10 @@ class ModelAdapter(ABC):
     #: Identificador estable del modelo. Ej: "gemini", "gpt", "claude".
     name: str = "unnamed"
 
+    #: Skills verificadas explícitamente para este adaptador.
+    #: No se deben declarar capacidades que no hayan sido comprobadas.
+    verified_skills: tuple[Skill, ...] = ()
+
     #: Versión por defecto si el proveedor no la devuelve.
     default_version: str = "unknown"
 

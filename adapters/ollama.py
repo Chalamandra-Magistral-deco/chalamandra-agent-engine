@@ -16,6 +16,7 @@ from adapters.base import (
     ModelRequest,
     ModelResponse,
     ModelStatus,
+    Skill,
 )
 
 
@@ -24,6 +25,11 @@ class OllamaAdapter(ModelAdapter):
 
     name = "ollama"
     default_version = "qwen2.5:3b"
+
+    # Capacidad verificada por la suite actual.
+    # Se amplía únicamente cuando exista una prueba correspondiente.
+    verified_skills = (Skill.REASONING,)
+
     DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 
     def __init__(
