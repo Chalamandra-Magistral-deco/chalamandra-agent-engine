@@ -1,0 +1,15 @@
+[project]
+name = "chalamandra-agents"
+version = "0.1.0"
+description = "Sistema de agentes multi-modelo"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "azure-identity>=1.19.0",
+    "azure-keyvault-secrets>=4.9.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["adapters*", "pipeline*", "registry*", "router*", "telemetry*", "config*", "security*", "core*"]
