@@ -28,7 +28,7 @@ class OllamaAdapter(ModelAdapter):
 
     # Capacidad verificada por la suite actual.
     # Se amplía únicamente cuando exista una prueba correspondiente.
-    verified_skills = (Skill.REASONING,)
+    verified_skills = (Skill.REASONING, Skill.ANALYSIS)
 
     DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 

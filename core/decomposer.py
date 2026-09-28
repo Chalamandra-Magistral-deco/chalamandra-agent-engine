@@ -25,9 +25,10 @@ class Subtask:
 _PROMPT_TEMPLATE = """Eres un descomponedor de tareas. Recibes una tarea y devuelves
 una lista de subtasks en JSON.
 
-Skills disponibles: research, reasoning, coding, debugging, creative,
-strategy, analysis, data, automation, vision, documents, web,
-verification, red_team, synthesis, planning, meta_reasoning
+Skills disponibles (SOLO estas 2): reasoning, analysis
+
+NO uses otras skills. Si crees que la tarea requiere otra cosa,
+úsala igual pero con skill=reasoning.
 
 Formato EXACTO (solo JSON, sin texto alrededor):
 
@@ -62,7 +63,7 @@ class Decomposer:
             prompt=prompt,
             system_prompt="Respondes solo con JSON valido.",
             temperature=0.0,
-            max_tokens=800,
+            max_tokens=200,
             role=ModelRole.PLANNER,
         )
 
