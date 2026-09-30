@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from adapters.base import Skill
 from core.decomposer import Decomposer
+from core.executor import Executor
 from core.orchestrator import Orchestrator
 from core.skill_router import SkillRouter
 from core.tool_registry import ToolRegistry
@@ -18,6 +19,7 @@ class Master:
         self.tools = ToolRegistry()
         self.router = SkillRouter(self.orchestrator, self.tools)
         self.decomposer = Decomposer(self.orchestrator)
+        self.executor = Executor(self)
 
         self._register_core_tools()
 
@@ -60,3 +62,8 @@ class Master:
 
     async def execute_tool(self, tool: str, **kwargs):
         return await self.tools.execute(tool, **kwargs)
+
+    async def execute_task(self, task: str):
+        """Descompone y ejecuta una tarea completa mediante el Executor DAG."""
+        subtasks = await self.decomposer.decompose(task)
+        return await self.executor.execute_plan(task, subtasks)

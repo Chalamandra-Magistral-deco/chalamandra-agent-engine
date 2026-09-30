@@ -45,3 +45,45 @@ async def test_master_execute_dynamics():
     assert "equilibrium" in result
     assert "hopf" in result
     assert "analysis" in result
+
+
+@pytest.mark.asyncio
+async def test_master_initialization():
+    master = Master()
+
+    assert master is not None
+    assert master.executor is not None
+
+
+@pytest.mark.asyncio
+async def test_master_execute_task():
+    master = Master()
+
+    class FakeDecomposer:
+        async def decompose(self, task):
+            from core.decomposer import Subtask
+
+            return [
+                Subtask(
+                    id="0",
+                    description="Tarea de prueba",
+                    skill="analysis",
+                    depends_on=[],
+                )
+            ]
+
+    class FakeExecutor:
+        async def execute_plan(self, task, subtasks):
+            return {
+                "task": task,
+                "status": "completed",
+                "step_count": len(subtasks),
+            }
+
+    master.decomposer = FakeDecomposer()
+    master.executor = FakeExecutor()
+
+    result = await master.execute_task("Ejecutar prueba")
+
+    assert result["status"] == "completed"
+    assert result["step_count"] == 1

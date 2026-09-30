@@ -118,9 +118,15 @@ class Executor:
 
         request = ModelRequest(
             prompt=full_prompt,
-            system_prompt=f"Ejecuta la tarea asignada usando tu habilidad de {subtask.skill}.",
-            temperature=0.2,
+            system_prompt=(
+                f"Ejecuta la tarea asignada usando tu habilidad de {subtask.skill}. "
+                "Responde de forma breve y directa."
+            ),
+            temperature=0.0,
+            max_tokens=64,
+            timeout_seconds=60.0,
             role=ModelRole.AGENT,
+            skills=[Skill(subtask.skill)],
         )
 
         response = await self.master.orchestrator.run(model, request)
