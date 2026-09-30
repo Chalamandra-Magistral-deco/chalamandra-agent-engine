@@ -62,7 +62,7 @@ MODELS: dict[str, ModelInfo] = {
     "gemini": ModelInfo(
         name="gemini",
         provider="google",
-        versions=["gemini-2.0-flash"],
+        versions=["gemini-3.8-flash"],
         skills_claimed={
             "research",
             "reasoning",

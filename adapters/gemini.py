@@ -5,6 +5,7 @@ Usa la API REST Generative Language v1beta.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import httpx
@@ -21,7 +22,7 @@ class GeminiAdapter(ModelAdapter):
     """Adaptador concreto para modelos Gemini de Google."""
 
     name = "gemini"
-    default_version = "gemini-2.0-flash"
+    default_version = "gemini-3.8-flash"
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
@@ -51,28 +52,54 @@ class GeminiAdapter(ModelAdapter):
             "contents": contents,
             "generationConfig": {
                 "temperature": request.temperature,
-                "maxOutputTokens": request.max_tokens,
+                "maxOutputTokens": max(request.max_tokens, 512),
+                "thinkingConfig": {
+                    "thinkingLevel": "low",
+                },
             },
         }
 
         url = f"{self.BASE_URL}/{self.model}:generateContent?key={self.api_key}"
 
-        try:
-            async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
-                r = await client.post(url, json=payload)
-                r.raise_for_status()
-                data = r.json()
-        except httpx.TimeoutException as e:
-            return self._error_response(request, ModelStatus.TIMEOUT, str(e), start_ms)
-        except httpx.HTTPStatusError as e:
+        max_retries = 3
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
+                    r = await client.post(url, json=payload)
+
+                    if r.status_code == 503 and attempt < max_retries:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+
+                    r.raise_for_status()
+                    data = r.json()
+                    break
+
+            except httpx.TimeoutException as e:
+                return self._error_response(
+                    request, ModelStatus.TIMEOUT, str(e), start_ms
+                )
+
+            except httpx.HTTPStatusError as e:
+                return self._error_response(
+                    request,
+                    ModelStatus.ERROR,
+                    f"HTTP {e.response.status_code}: {e.response.text[:300]}",
+                    start_ms,
+                )
+
+            except Exception as e:
+                return self._error_response(
+                    request, ModelStatus.ERROR, repr(e), start_ms
+                )
+        else:
             return self._error_response(
                 request,
                 ModelStatus.ERROR,
-                f"HTTP {e.response.status_code}: {e.response.text[:300]}",
+                "Gemini agotó los reintentos por HTTP 503",
                 start_ms,
             )
-        except Exception as e:
-            return self._error_response(request, ModelStatus.ERROR, repr(e), start_ms)
 
         try:
             candidates = data.get("candidates", [])

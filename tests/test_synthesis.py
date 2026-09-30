@@ -17,7 +17,9 @@ async def main() -> None:
     print("Adaptadores registrados:")
     print(orchestrator.available_models())
 
-    assert orchestrator.available_models() == ["ollama"]
+    models = orchestrator.available_models()
+    assert "ollama" in models
+    assert "gemini" in models
 
     responses = await run_on_models(
         orchestrator,

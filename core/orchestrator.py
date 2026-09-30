@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from adapters.base import ModelRequest, ModelResponse, Skill
 from adapters.ollama import OllamaAdapter
+from adapters.gemini import GeminiAdapter
+from dotenv import load_dotenv
 from telemetry.trace import Tracer
+
+
+load_dotenv("config/.env")
 
 
 class Orchestrator:
@@ -16,6 +22,11 @@ class Orchestrator:
         self.adapters: dict[str, object] = {
             "ollama": OllamaAdapter(),
         }
+
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            self.adapters["gemini"] = GeminiAdapter(api_key=gemini_key)
+
         self.tracer = tracer or Tracer()
 
     def available_models(self) -> list[str]:
