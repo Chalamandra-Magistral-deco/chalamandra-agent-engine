@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 
 from adapters.base import ModelRequest, ModelResponse, Skill
@@ -13,6 +14,7 @@ from adapters.gpt import GPTAdapter
 from adapters.claude import ClaudeAdapter
 from dotenv import load_dotenv
 from telemetry.trace import Tracer
+from registry.models import MODELS
 
 
 load_dotenv("config/.env")
@@ -55,6 +57,51 @@ class Orchestrator:
 
     def register(self, name: str, adapter: object) -> None:
         self.adapters[name] = adapter
+
+    def adapter_states(self) -> dict[str, dict[str, object]]:
+        """Clasifica el estado operativo de todos los adapters conocidos.
+
+        Estados:
+          VERIFIED     -> activo y con skills verificadas.
+          ACTIVE       -> activo pero sin skills verificadas.
+          REGISTERED   -> adapter implementado pero no activo.
+          UNAVAILABLE  -> sin adapter implementado.
+        """
+        known = sorted(set(MODELS) | set(self.adapters))
+        result: dict[str, dict[str, object]] = {}
+
+        for name in known:
+            module_available = (
+                importlib.util.find_spec(f"adapters.{name}") is not None
+            )
+
+            active = name in self.adapters
+            adapter = self.adapters.get(name)
+            raw_skills = getattr(adapter, "verified_skills", ()) if adapter else ()
+
+            verified_skills = [
+                skill.value if isinstance(skill, Skill) else str(skill)
+                for skill in raw_skills
+            ]
+
+            if active and verified_skills:
+                state = "VERIFIED"
+            elif active:
+                state = "ACTIVE"
+            elif module_available:
+                state = "REGISTERED"
+            else:
+                state = "UNAVAILABLE"
+
+            result[name] = {
+                "state": state,
+                "registered": module_available or active,
+                "active": active,
+                "verified": bool(verified_skills),
+                "skills_verified": sorted(verified_skills),
+            }
+
+        return result
 
     def capabilities(self) -> dict[str, dict[str, object]]:
         """Expone las capacidades verificadas de los adaptadores registrados."""
