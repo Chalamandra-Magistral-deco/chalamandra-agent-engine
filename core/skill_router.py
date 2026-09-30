@@ -45,7 +45,25 @@ class SkillRouter:
         self,
         skill: str | Skill,
     ) -> dict[str, list[str]]:
+        verified = self.models_for(
+            skill,
+            only_verified=True,
+        )
+
+        active = self.models_for(
+            skill,
+            only_verified=False,
+        )
+
+        fallback = [
+            model
+            for model in active
+            if model not in verified
+        ]
+
         return {
-            "models": self.models_for(skill),
+            "models": verified,
+            "fallback_models": fallback,
+            "active_models": active,
             "tools": self.tools_for(skill),
         }

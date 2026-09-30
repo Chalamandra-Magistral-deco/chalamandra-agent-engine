@@ -48,9 +48,19 @@ class Master:
         steps = []
         for st in subtasks:
             route = self.router.route(st.skill)
+
+            models = (
+                route["models"]
+                if route["models"]
+                else route["fallback_models"]
+            )
+
             steps.append({
                 "subtask": st.to_dict(),
-                "models": route["models"],
+                "models": models,
+                "verified_models": route["models"],
+                "fallback_models": route["fallback_models"],
+                "active_models": route["active_models"],
                 "tools": route["tools"],
             })
 

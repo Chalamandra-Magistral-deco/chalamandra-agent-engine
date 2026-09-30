@@ -112,9 +112,24 @@ class Executor:
         prompt_parts.append(subtask.description)
         full_prompt = "\n".join(prompt_parts)
 
-        # Ruteo vía Master según la skill solicitada
+        # Ruteo vía Master según la skill solicitada.
+        # Prioridad:
+        #   1. modelos verificados
+        #   2. modelos activos como fallback
         route = self.master.route_skill(subtask.skill)
-        model = route["models"][0] if route["models"] else "ollama"
+
+        candidates = (
+            route["models"]
+            if route["models"]
+            else route["fallback_models"]
+        )
+
+        if not candidates:
+            raise ValueError(
+                f"No hay adapters activos para la skill: {subtask.skill}"
+            )
+
+        model = candidates[0]
 
         request = ModelRequest(
             prompt=full_prompt,

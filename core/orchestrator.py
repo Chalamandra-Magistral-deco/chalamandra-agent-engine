@@ -128,21 +128,55 @@ class Orchestrator:
         *,
         only_verified: bool = True,
     ) -> list[str]:
-        """Devuelve modelos registrados compatibles con una skill."""
+        """Devuelve adapters activos compatibles con una skill.
+
+        only_verified=True:
+            solo adapters activos con evidencia local de la skill.
+
+        only_verified=False:
+            adapters activos cuya skill esté verificada o reclamada
+            en el registro de modelos.
+        """
         skill_name = (
             skill.value if isinstance(skill, Skill) else skill
         )
 
-        if not only_verified:
-            return sorted(self.adapters.keys())
-
         capabilities = self.capabilities()
 
-        return sorted(
-            name
-            for name, info in capabilities.items()
-            if skill_name in info["skills_verified"]
-        )
+        if only_verified:
+            return sorted(
+                name
+                for name, info in capabilities.items()
+                if skill_name in info["skills_verified"]
+            )
+
+        active = set(self.adapters.keys())
+
+        compatible: set[str] = set()
+
+        for name in active:
+            info = MODELS.get(name)
+
+            if info is None:
+                # Adapter registrado dinámicamente: solo contamos
+                # las skills verificadas que declara directamente.
+                verified = capabilities.get(
+                    name,
+                    {},
+                ).get("skills_verified", [])
+
+                if skill_name in verified:
+                    compatible.add(name)
+
+                continue
+
+            if (
+                skill_name in info.skills_verified
+                or skill_name in info.skills_claimed
+            ):
+                compatible.add(name)
+
+        return sorted(compatible)
 
     async def run(self, model: str, request: ModelRequest) -> ModelResponse:
         adapter = self.adapters.get(model)
