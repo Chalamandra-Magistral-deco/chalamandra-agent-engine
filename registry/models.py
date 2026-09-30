@@ -77,8 +77,11 @@ MODELS: dict[str, ModelInfo] = {
     "gpt": ModelInfo(
         name="gpt",
         provider="openai",
+        versions=["gpt-5.6-luna"],
         skills_claimed={"reasoning", "coding", "analysis"},
-        evidence={"note": "sin adaptador ni ejecución"},
+        evidence={
+            "note": "adapter integrado; pendiente de ejecución/benchmark",
+        },
     ),
 
     "claude": ModelInfo(
