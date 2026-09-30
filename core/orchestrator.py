@@ -8,6 +8,7 @@ import os
 from adapters.base import ModelRequest, ModelResponse, Skill
 from adapters.ollama import OllamaAdapter
 from adapters.gemini import GeminiAdapter
+from adapters.deepseek import DeepSeekAdapter
 from dotenv import load_dotenv
 from telemetry.trace import Tracer
 
@@ -26,6 +27,12 @@ class Orchestrator:
         gemini_key = os.getenv("GEMINI_API_KEY")
         if gemini_key:
             self.adapters["gemini"] = GeminiAdapter(api_key=gemini_key)
+
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        if deepseek_key:
+            self.adapters["deepseek"] = DeepSeekAdapter(
+                api_key=deepseek_key
+            )
 
         self.tracer = tracer or Tracer()
 

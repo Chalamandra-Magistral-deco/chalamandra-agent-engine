@@ -91,8 +91,11 @@ MODELS: dict[str, ModelInfo] = {
     "deepseek": ModelInfo(
         name="deepseek",
         provider="deepseek",
+        versions=["deepseek-flash"],
         skills_claimed={"coding", "reasoning"},
-        evidence={"note": "sin adaptador ni ejecución"},
+        evidence={
+            "note": "adapter integrado; pendiente de ejecución/benchmark",
+        },
     ),
 
     "qwen": ModelInfo(
