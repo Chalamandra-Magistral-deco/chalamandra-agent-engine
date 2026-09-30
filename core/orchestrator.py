@@ -10,6 +10,7 @@ from adapters.ollama import OllamaAdapter
 from adapters.gemini import GeminiAdapter
 from adapters.deepseek import DeepSeekAdapter
 from adapters.gpt import GPTAdapter
+from adapters.claude import ClaudeAdapter
 from dotenv import load_dotenv
 from telemetry.trace import Tracer
 
@@ -39,6 +40,12 @@ class Orchestrator:
         if openai_key:
             self.adapters["gpt"] = GPTAdapter(
                 api_key=openai_key
+            )
+
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            self.adapters["claude"] = ClaudeAdapter(
+                api_key=anthropic_key
             )
 
         self.tracer = tracer or Tracer()

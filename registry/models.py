@@ -87,8 +87,11 @@ MODELS: dict[str, ModelInfo] = {
     "claude": ModelInfo(
         name="claude",
         provider="anthropic",
+        versions=["claude-sonnet-5"],
         skills_claimed={"documents", "reasoning", "synthesis"},
-        evidence={"note": "sin adaptador ni ejecución"},
+        evidence={
+            "note": "adapter integrado; pendiente de ejecución/benchmark",
+        },
     ),
 
     "deepseek": ModelInfo(
