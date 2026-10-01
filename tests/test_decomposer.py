@@ -43,3 +43,29 @@ async def test_decompose():
     assert subtasks[0].skill == "analysis"
     assert subtasks[1].skill == "analysis"
     assert subtasks[1].depends_on == [subtasks[0].id]
+
+
+def test_infer_exact_validation_rule():
+    from core.decomposer import _infer_validation_rules
+
+    assert _infer_validation_rules("Di solo: OK") == ["exact:OK"]
+
+
+def test_infer_exact_validation_rule_case_insensitive():
+    from core.decomposer import _infer_validation_rules
+
+    assert _infer_validation_rules("Responde solo: FUNCIONA") == [
+        "exact:FUNCIONA"
+    ]
+
+
+def test_infer_exact_validation_rule_quoted():
+    from core.decomposer import _infer_validation_rules
+
+    assert _infer_validation_rules('Di solo: "OK"') == ["exact:OK"]
+
+
+def test_no_inference_when_instruction_is_not_explicit():
+    from core.decomposer import _infer_validation_rules
+
+    assert _infer_validation_rules("Analiza el sistema") == []

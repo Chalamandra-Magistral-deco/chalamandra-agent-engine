@@ -57,6 +57,36 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
+def _infer_validation_rules(text: str) -> list[str]:
+    """Infiere reglas deterministas solo desde instrucciones explícitas."""
+
+    patterns = (
+        r"^\s*di\s+solo\s*:\s*(?P<value>.+?)\s*$",
+        r"^\s*responde\s+solo\s*:\s*(?P<value>.+?)\s*$",
+        r"^\s*devuelve\s+solo\s*:\s*(?P<value>.+?)\s*$",
+        r"^\s*responde\s+exactamente\s*:\s*(?P<value>.+?)\s*$",
+    )
+
+    for pattern in patterns:
+        match = re.match(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+
+        expected = match.group("value").strip()
+
+        if (
+            len(expected) >= 2
+            and expected[0] == expected[-1]
+            and expected[0] in {"'", '"'}
+        ):
+            expected = expected[1:-1].strip()
+
+        if expected:
+            return [f"exact:{expected}"]
+
+    return []
+
+
 class Decomposer:
     def __init__(self, orchestrator: Orchestrator, model: str = "ollama") -> None:
         self.orchestrator = orchestrator
@@ -100,12 +130,22 @@ class Decomposer:
                 elif isinstance(d, str) and d.isdigit() and int(d) in idx_to_id:
                     deps.append(idx_to_id[int(d)])
 
+            description = str(
+                item.get("description", "")
+            ).strip()
+
             subtasks.append(Subtask(
                 id=sid,
-                description=str(item.get("description", "")).strip(),
+                description=description,
                 skill=str(item.get("skill", "reasoning")).strip(),
                 depends_on=deps,
+                validation_rules=_infer_validation_rules(description),
             ))
+
+        # Si la tarea es simple y el modelo no preservó el patrón explícito,
+        # recuperamos la regla desde la intención original.
+        if len(subtasks) == 1 and not subtasks[0].validation_rules:
+            subtasks[0].validation_rules = _infer_validation_rules(task)
 
         return subtasks
 
@@ -115,4 +155,5 @@ class Decomposer:
             description=task,
             skill="reasoning",
             depends_on=[],
+            validation_rules=_infer_validation_rules(task),
         )]
