@@ -9,7 +9,15 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "azure-identity>=1.19.0",
     "azure-keyvault-secrets>=4.9.0",
+    # dynamics (sistemas dinámicos con retardo)
+    "numpy>=2.5",
+    "scipy>=1.18",
+    "numba>=0.67",
+    "llvmlite>=0.49",
+    "jitcdde>=1.8",
+    "CHSPy>=1.2",
+    "matplotlib>=3.11",
 ]
 
 [tool.setuptools.packages.find]
-include = ["dynamics*", "adapters*", "pipeline*", "registry*", "router*", "telemetry*", "config*", "security*", "core*"]
+include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "security*", "core*"]
