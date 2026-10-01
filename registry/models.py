@@ -44,12 +44,12 @@ MODELS: dict[str, ModelInfo] = {
         local=True,
         versions=["qwen2.5:3b"],
         skills_verified={
-            # Verificado con tests/test_ollama.py y test_orchestrator.py
+            # Verificado por la suite actual del adapter/orchestrator.
             "reasoning",
+            "analysis",
         },
         skills_claimed={
             "coding",
-            "analysis",
         },
         evidence={
             "reasoning": "tests/test_ollama.py verde 2026-09-28, latencia warm ~1.8-3.4s",
