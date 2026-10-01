@@ -39,6 +39,11 @@ Reglas:
 - Cada subtask tiene UNA skill de la lista.
 - depends_on referencia indices anteriores como strings ("0", "1").
 - Tarea simple = 1 sola subtask.
+- PRESERVA EXACTAMENTE LA INTENCION DE LA TAREA.
+- NO reemplaces una instruccion por un analisis de la instruccion.
+- NO interpretes ni critiques la tarea cuando esta pida una respuesta concreta.
+- Si la tarea es una instruccion simple, la subtask debe conservar esa instruccion casi literalmente.
+- Ejemplo: "Di solo: OK" -> description="Di solo: OK", skill="reasoning".
 
 TAREA: __TASK__
 """
