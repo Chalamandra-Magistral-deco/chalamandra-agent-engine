@@ -7,6 +7,7 @@ from core.decomposer import Decomposer
 from core.executor import Executor
 from core.orchestrator import Orchestrator
 from core.skill_router import SkillRouter
+from core.model_router import ModelRouter
 from core.tool_registry import ToolRegistry
 from pipeline.dynamics_tool import analyze_dynamics
 
@@ -18,6 +19,7 @@ class Master:
         self.orchestrator = Orchestrator()
         self.tools = ToolRegistry()
         self.router = SkillRouter(self.orchestrator, self.tools)
+        self.model_router = ModelRouter(self.orchestrator)
         self.decomposer = Decomposer(self.orchestrator)
         self.executor = Executor(self)
 
@@ -41,6 +43,28 @@ class Master:
     def route_skill(self, skill: str | Skill) -> dict[str, list[str]]:
         return self.router.route(skill)
 
+    def route_models(
+        self,
+        skill: str | Skill,
+        *,
+        allow_fallback: bool = True,
+    ) -> list[str]:
+        return self.model_router.route(
+            skill,
+            allow_fallback=allow_fallback,
+        )
+
+    def select_model(
+        self,
+        skill: str | Skill,
+        *,
+        allow_fallback: bool = True,
+    ) -> str | None:
+        return self.model_router.select(
+            skill,
+            allow_fallback=allow_fallback,
+        )
+
     async def plan(self, task: str) -> dict:
         """Descompone una tarea y enruta cada subtask a modelos/tools."""
         subtasks = await self.decomposer.decompose(task)
@@ -48,19 +72,14 @@ class Master:
         steps = []
         for st in subtasks:
             route = self.router.route(st.skill)
-
-            models = (
-                route["models"]
-                if route["models"]
-                else route["fallback_models"]
-            )
+            models = self.model_router.route(st.skill)
 
             steps.append({
                 "subtask": st.to_dict(),
                 "models": models,
-                "verified_models": route["models"],
-                "fallback_models": route["fallback_models"],
-                "active_models": route["active_models"],
+                "verified_models": self.model_router.verified(st.skill),
+                "fallback_models": self.model_router.fallback(st.skill),
+                "active_models": self.model_router.active(st.skill),
                 "tools": route["tools"],
             })
 
