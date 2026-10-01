@@ -131,3 +131,79 @@ def test_build_levels_missing_dependency():
 
     with pytest.raises(ValueError, match="dependencias inexistentes"):
         executor.build_levels(subtasks)
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_validation_failure():
+    fake_master = FakeMaster()
+
+    fake_master.orchestrator.run.return_value = ModelResponse(
+        call_id="validation-1",
+        model="ollama",
+        role=ModelRole.AGENT,
+        output="NO",
+        status=ModelStatus.OK,
+    )
+
+    executor = Executor(master=fake_master)
+
+    subtasks = [
+        Subtask(
+            id="0",
+            description="Di solo: OK",
+            skill="reasoning",
+            depends_on=[],
+            validation_rules=["exact:OK"],
+        ),
+    ]
+
+    summary = await executor.execute_plan(
+        "Tarea validada",
+        subtasks,
+    )
+
+    result = summary.subtask_results["0"]
+
+    assert result.output == "NO"
+    assert result.status == "validation_failed"
+    assert result.validation_status == "FAIL"
+    assert result.validation_errors
+    assert summary.status == "partial_error"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_validation_success():
+    fake_master = FakeMaster()
+
+    fake_master.orchestrator.run.return_value = ModelResponse(
+        call_id="validation-2",
+        model="ollama",
+        role=ModelRole.AGENT,
+        output="OK",
+        status=ModelStatus.OK,
+    )
+
+    executor = Executor(master=fake_master)
+
+    subtasks = [
+        Subtask(
+            id="0",
+            description="Di solo: OK",
+            skill="reasoning",
+            depends_on=[],
+            validation_rules=["exact:OK"],
+        ),
+    ]
+
+    summary = await executor.execute_plan(
+        "Tarea validada",
+        subtasks,
+    )
+
+    result = summary.subtask_results["0"]
+
+    assert result.output == "OK"
+    assert result.status == "ok"
+    assert result.validation_status == "PASS"
+    assert not result.validation_errors
+    assert summary.status == "completed"

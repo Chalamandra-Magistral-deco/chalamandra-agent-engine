@@ -17,6 +17,7 @@ class Subtask:
     description: str
     skill: str
     depends_on: list[str] = field(default_factory=list)
+    validation_rules: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

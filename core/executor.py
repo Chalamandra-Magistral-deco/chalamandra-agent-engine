@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from adapters.base import ModelRequest, ModelRole, Skill
 from core.decomposer import Subtask
+from core.task_validator import TaskValidator
 if TYPE_CHECKING:
     from core.master import Master
 
@@ -21,6 +22,8 @@ class SubtaskResult:
     model_used: str
     status: str = "ok"
     errors: list[str] = field(default_factory=list)
+    validation_status: str = "SKIPPED"
+    validation_errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -34,8 +37,13 @@ class ExecutionSummary:
 class Executor:
     """Ejecuta un plan de Subtasks organizadas como DAG."""
 
-    def __init__(self, master: "Master | None" = None) -> None:
+    def __init__(
+        self,
+        master: "Master | None" = None,
+        validator: TaskValidator | None = None,
+    ) -> None:
         self.master = master or Master()
+        self.validator = validator or TaskValidator()
 
     def build_levels(self, subtasks: list[Subtask]) -> list[list[Subtask]]:
         """Organiza las subtasks en niveles independientes para ejecución paralela.
@@ -138,14 +146,37 @@ class Executor:
 
         response = await self.master.orchestrator.run(model, request)
 
+        validation_status = "SKIPPED"
+        validation_errors: list[str] = []
+        status = response.status.value
+        errors = list(response.errors)
+
+        if response.status.value == "ok":
+            validation = self.validator.validate(
+                response.output,
+                subtask.validation_rules,
+            )
+
+            validation_status = validation.status
+            validation_errors = list(validation.errors)
+
+            if validation.is_fail:
+                status = "validation_failed"
+                errors.extend(
+                    f"validation:{error}"
+                    for error in validation.errors
+                )
+
         return SubtaskResult(
             subtask_id=subtask.id,
             description=subtask.description,
             skill=subtask.skill,
             output=response.output,
             model_used=model,
-            status=response.status.value,
-            errors=response.errors,
+            status=status,
+            errors=errors,
+            validation_status=validation_status,
+            validation_errors=validation_errors,
         )
 
     async def execute_plan(
