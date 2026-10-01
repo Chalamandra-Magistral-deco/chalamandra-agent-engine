@@ -15,6 +15,9 @@ class FakeMaster:
     def route_skill(self, skill: str):
         return {"models": ["ollama"], "tools": []}
 
+    def select_model(self, skill: str, *, allow_fallback: bool = True):
+        return "ollama"
+
 
 def test_build_levels_dag():
     executor = Executor(master=FakeMaster())
