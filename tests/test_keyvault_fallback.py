@@ -46,7 +46,8 @@ def test_cloud_keys_can_load_from_key_vault(monkeypatch) -> None:
     orchestrator = Orchestrator()
 
     assert set(PROVIDER_KEYS).issubset(orchestrator.credential_status)
-    assert set(PROVIDER_KEYS).issubset(calls)
+    expected_vault_names = {name.lower().replace("_", "-") for name in PROVIDER_KEYS}
+    assert expected_vault_names.issubset(calls)
     assert {"gemini", "deepseek", "gpt", "claude"}.issubset(
         orchestrator.available_models()
     )
