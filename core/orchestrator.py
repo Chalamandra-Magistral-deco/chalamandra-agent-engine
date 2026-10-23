@@ -41,7 +41,10 @@ def _load_optional_secret(name: str, status: dict[str, str]) -> str | None:
     try:
         from security.keyvault import get_secret
 
-        value = get_secret(name)
+        # Azure Key Vault secret names allow letters, digits and hyphens,
+        # not environment-style underscores (for example gemini-api-key).
+        vault_name = name.lower().replace("_", "-")
+        value = get_secret(vault_name)
     except Exception as exc:
         status[name] = f"unavailable:{type(exc).__name__}"
         return None
