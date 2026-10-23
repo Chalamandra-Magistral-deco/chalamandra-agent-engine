@@ -51,8 +51,10 @@ def _positive_float_env(name: str, default: float) -> float:
 # Enums canónicos
 # ---------------------------------------------------------------------------
 
+
 class ModelRole(str, Enum):
     """Rol que el sistema asigna al modelo en una llamada concreta."""
+
     AGENT = "agent"
     SPECIALIST = "specialist"
     CRITIC = "critic"
@@ -68,6 +70,7 @@ class ModelRole(str, Enum):
 
 class ModelStatus(str, Enum):
     """Estado final de una llamada a un modelo."""
+
     OK = "ok"
     ERROR = "error"
     TIMEOUT = "timeout"
@@ -76,6 +79,7 @@ class ModelStatus(str, Enum):
 
 class Skill(str, Enum):
     """Skills que el Skill Router puede exigir."""
+
     RESEARCH = "research"
     REASONING = "reasoning"
     CODING = "coding"
@@ -99,8 +103,10 @@ class Skill(str, Enum):
 # Request / Response
 # ---------------------------------------------------------------------------
 
+
 class ModelRequest(BaseModel):
     """Entrada canónica a cualquier modelo."""
+
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str
     system_prompt: str | None = None
@@ -116,10 +122,15 @@ class ModelRequest(BaseModel):
     role: ModelRole = ModelRole.AGENT
     skills: list[Skill] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Native tool definitions and conversation history are optional so adapters
+    # that do not support tool calling remain backward-compatible.
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    messages: list[dict[str, Any]] | None = None
 
 
 class ModelResponse(BaseModel):
     """Salida canónica de cualquier modelo. Trazable y verificable."""
+
     call_id: str
     model: str
     model_version: str = "unknown"
@@ -133,6 +144,7 @@ class ModelResponse(BaseModel):
     status: ModelStatus = ModelStatus.OK
     errors: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = None  # respuesta cruda del proveedor, opcional
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
@@ -142,6 +154,7 @@ class ModelResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Adapter abstracto
 # ---------------------------------------------------------------------------
+
 
 class ModelAdapter(ABC):
     """

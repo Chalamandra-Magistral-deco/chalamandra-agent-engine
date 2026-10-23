@@ -21,7 +21,7 @@ class FakeMaster:
 
 def test_build_levels_dag():
     executor = Executor(master=FakeMaster())
-    
+
     subtasks = [
         Subtask(id="0", description="Paso 1", skill="analysis", depends_on=[]),
         Subtask(id="1", description="Paso 2A", skill="reasoning", depends_on=["0"]),
@@ -39,7 +39,7 @@ def test_build_levels_dag():
 
 def test_build_levels_cycle_detection():
     executor = Executor(master=FakeMaster())
-    
+
     subtasks = [
         Subtask(id="0", description="A", skill="reasoning", depends_on=["1"]),
         Subtask(id="1", description="B", skill="reasoning", depends_on=["0"]),
@@ -231,3 +231,115 @@ async def test_execute_plan_propagates_cancellation() -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await executor.execute_plan("Cancelación", subtasks)
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_is_validated_executed_and_returned_to_ollama(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.master import Master
+
+    master = Master()
+    executed: list[tuple[str, dict]] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        executed.append((tool, kwargs))
+        return {"status": "ok", "tool": tool}
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+    tool_arguments = {"a": 1.0, "b": 0.5, "alpha": 0.2, "gamma": 0.1, "tau": 2.0}
+    tool_message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"function": {"name": "dynamics", "arguments": tool_arguments}}],
+    }
+    master.orchestrator.run = AsyncMock(
+        side_effect=[
+            ModelResponse(
+                call_id="tool-call",
+                model="ollama",
+                role=ModelRole.AGENT,
+                output="",
+                tool_calls=[{"name": "dynamics", "arguments": tool_arguments}],
+                raw={"message": tool_message},
+            ),
+            ModelResponse(
+                call_id="final",
+                model="ollama",
+                role=ModelRole.AGENT,
+                output="Simulación completada con resultado verificado.",
+            ),
+        ]
+    )
+    executor = Executor(master=master)
+    subtask = Subtask(
+        id="native-tools",
+        description="Analizar EUR/USD y volatilidad",
+        skill="analysis",
+        depends_on=[],
+    )
+
+    result = await executor.execute_subtask(subtask, {})
+
+    assert result.status == "ok"
+    assert result.output == "Simulación completada con resultado verificado."
+    assert executed == [("dynamics", tool_arguments)]
+    first_request = master.orchestrator.run.await_args_list[0].args[1]
+    assert {tool["function"]["name"] for tool in first_request.tools} == {
+        "dynamics",
+        "catedralx_reasoning",
+        "search_term_miner",
+    }
+    followup_request = master.orchestrator.run.await_args_list[1].args[1]
+    assert followup_request.messages is not None
+    assert followup_request.messages[-1]["role"] == "tool"
+    assert '"ok": true' in followup_request.messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_with_invalid_arguments_is_not_executed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.master import Master
+
+    master = Master()
+    executed: list[str] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        executed.append(tool)
+        return "should not execute"
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+    bad_arguments = {"unknown": True}
+    master.orchestrator.run = AsyncMock(
+        side_effect=[
+            ModelResponse(
+                call_id="tool-call",
+                model="ollama",
+                role=ModelRole.AGENT,
+                output="",
+                tool_calls=[{"name": "dynamics", "arguments": bad_arguments}],
+                raw={"message": {"role": "assistant", "content": "", "tool_calls": []}},
+            ),
+            ModelResponse(
+                call_id="final",
+                model="ollama",
+                role=ModelRole.AGENT,
+                output="La llamada fue rechazada.",
+            ),
+        ]
+    )
+    executor = Executor(master=master)
+    subtask = Subtask(
+        id="invalid-native-tools",
+        description="Analizar EUR/USD y volatilidad",
+        skill="analysis",
+        depends_on=[],
+    )
+
+    await executor.execute_subtask(subtask, {})
+
+    assert executed == []
+    followup_request = master.orchestrator.run.await_args_list[1].args[1]
+    assert '"ok": false' in followup_request.messages[-1]["content"]
+    assert "Argumentos inválidos" in followup_request.messages[-1]["content"]

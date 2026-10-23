@@ -26,12 +26,12 @@ result = await engine.execute_agent_tool_call(
     "analyst",
     {
         "name": "catedralx_reasoning",
-        "arguments": {"prices": [1.08, 1.081, 1.079]},
+        "arguments": {"data_source": "frankfurter_daily", "observations": 60},
     },
 )
 ```
 
-Esta frontera de ejecución ya está disponible para llamadas estructuradas originadas por el host. No implica que los adaptadores de modelo devuelvan llamadas nativas a herramientas ni que `Executor` las ejecute automáticamente; esa integración queda pendiente y debe reutilizar esta validación en lugar de invocar handlers directamente.
+El adaptador Ollama ya envía los esquemas de herramientas autorizadas y normaliza las llamadas nativas devueltas por el modelo. `Executor` procesa el ciclo modelo → llamada propuesta → validación del host → resultado de herramienta → respuesta del modelo, con un máximo de tres rondas por subtarea. Las llamadas se ejecutan mediante `Master.execute_agent_tool_call`; los errores de validación se devuelven al modelo como resultados fallidos y nunca se convierten en ejecución arbitraria. Los demás adaptadores no reciben ejecución automática de llamadas nativas en esta fase; cualquier llamada inesperada procedente de otro adaptador se rechaza.
 
 Los perfiles son controles declarativos iniciales, no cinco procesos autónomos aislados. El modelo recibe instrucciones de rol, pero no obtiene ejecución directa del sistema operativo. Los cambios de archivos, despliegues, operaciones financieras y cambios en campañas requieren una interfaz anfitriona explícita y sus propias autorizaciones. `sentinel` no dispone todavía de un escáner Solidity/EVM registrado: no afirmar detección automatizada de vulnerabilidades hasta integrar y probar herramientas específicas.
 

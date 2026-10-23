@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
-from typing import Any
+import types
+import typing
+from collections.abc import Mapping, Sequence
+from typing import Any, get_args, get_origin, get_type_hints
+
+from pydantic import TypeAdapter
 
 from adapters.base import Skill
 from core.decomposer import Decomposer
@@ -138,6 +142,68 @@ class Master:
             "steps": steps,
         }
 
+    @staticmethod
+    def _json_schema_type(annotation: Any) -> dict[str, Any]:
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if origin in (list, tuple, set, Sequence):
+            item = args[0] if args else str
+            return {"type": "array", "items": Master._json_schema_type(item)}
+        if origin in (types.UnionType, typing.Union):
+            non_none = [arg for arg in args if arg is not type(None)]
+            return (
+                Master._json_schema_type(non_none[0]) if len(non_none) == 1 else {"type": "string"}
+            )
+        if annotation is str:
+            return {"type": "string"}
+        if annotation is bool:
+            return {"type": "boolean"}
+        if annotation is int:
+            return {"type": "integer"}
+        if annotation is float:
+            return {"type": "number"}
+        if annotation is dict or origin is dict:
+            return {"type": "object", "additionalProperties": True}
+        return {"type": "string"}
+
+    def tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
+        """Construye esquemas nativos para el subconjunto autorizado."""
+        schemas = []
+        for name in names:
+            spec = self.tools.get(name)
+            signature = inspect.signature(spec.handler)
+            try:
+                hints = get_type_hints(spec.handler)
+            except (NameError, TypeError):
+                hints = {}
+            properties: dict[str, Any] = {}
+            required: list[str] = []
+            for parameter_name, parameter in signature.parameters.items():
+                if parameter.kind in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                ):
+                    continue
+                annotation = hints.get(parameter_name, parameter.annotation)
+                properties[parameter_name] = self._json_schema_type(annotation)
+                if parameter.default is inspect.Parameter.empty:
+                    required.append(parameter_name)
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": spec.name,
+                        "description": spec.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required,
+                        },
+                    },
+                }
+            )
+        return schemas
+
     async def execute_tool(self, tool: str, **kwargs):
         """Invoca una herramienta desde el límite de confianza de la aplicación."""
         return await self.tools.execute(tool, **kwargs)
@@ -172,11 +238,26 @@ class Master:
             )
 
         try:
-            inspect.signature(spec.handler).bind(**dict(arguments))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Argumentos inválidos para la herramienta {tool_name!r}: {exc}"
-            ) from exc
+            signature = inspect.signature(spec.handler)
+            signature.bind(**dict(arguments))
+            try:
+                hints = get_type_hints(spec.handler)
+            except (NameError, TypeError):
+                hints = {}
+            for argument_name, argument_value in arguments.items():
+                parameter = signature.parameters[argument_name]
+                annotation = hints.get(argument_name, parameter.annotation)
+                if annotation is not inspect.Parameter.empty:
+                    TypeAdapter(annotation).validate_python(argument_value)
+        except Exception as exc:
+            if (
+                isinstance(exc, (TypeError, ValueError, KeyError))
+                or type(exc).__name__ == "ValidationError"
+            ):
+                raise ValueError(
+                    f"Argumentos inválidos para la herramienta {tool_name!r}: {exc}"
+                ) from exc
+            raise
 
         return await self.execute_tool(tool_name, **dict(arguments))
 
