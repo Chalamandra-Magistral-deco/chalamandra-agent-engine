@@ -20,35 +20,75 @@ from registry.models import MODELS
 load_dotenv("config/.env")
 
 
+def _load_optional_secret(name: str, status: dict[str, str]) -> str | None:
+    """Load a provider key from the environment or Azure Key Vault.
+
+    Key Vault is attempted only when AZURE_KEYVAULT_URI is configured, so
+    local/offline development can continue with Ollama and no Azure setup.
+    Failure to resolve a cloud key must not prevent the local adapter from
+    starting. Only the source/status is recorded; secret values are never
+    included in diagnostics.
+    """
+    value = os.getenv(name)
+    if value:
+        status[name] = "environment"
+        return value
+
+    if not os.getenv("AZURE_KEYVAULT_URI"):
+        status[name] = "not_configured"
+        return None
+
+    try:
+        from security.keyvault import get_secret
+
+        # Azure Key Vault secret names allow letters, digits and hyphens,
+        # not environment-style underscores (for example gemini-api-key).
+        vault_name = name.lower().replace("_", "-")
+        value = get_secret(vault_name)
+    except Exception as exc:
+        status[name] = f"unavailable:{type(exc).__name__}"
+        return None
+
+    if not value:
+        status[name] = "not_found"
+        return None
+
+    status[name] = "azure_key_vault"
+    return value
+
+
 class Orchestrator:
     """Núcleo de ejecución."""
 
     def __init__(self, tracer: Tracer | None = None) -> None:
+        self.credential_status: dict[str, str] = {}
         self.adapters: dict[str, object] = {
             "ollama": OllamaAdapter(),
         }
 
-        gemini_key = os.getenv("GEMINI_API_KEY")
+        gemini_key = _load_optional_secret(
+            "GEMINI_API_KEY", self.credential_status
+        )
         if gemini_key:
             self.adapters["gemini"] = GeminiAdapter(api_key=gemini_key)
 
-        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        deepseek_key = _load_optional_secret(
+            "DEEPSEEK_API_KEY", self.credential_status
+        )
         if deepseek_key:
-            self.adapters["deepseek"] = DeepSeekAdapter(
-                api_key=deepseek_key
-            )
+            self.adapters["deepseek"] = DeepSeekAdapter(api_key=deepseek_key)
 
-        openai_key = os.getenv("OPENAI_API_KEY")
+        openai_key = _load_optional_secret(
+            "OPENAI_API_KEY", self.credential_status
+        )
         if openai_key:
-            self.adapters["gpt"] = GPTAdapter(
-                api_key=openai_key
-            )
+            self.adapters["gpt"] = GPTAdapter(api_key=openai_key)
 
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        anthropic_key = _load_optional_secret(
+            "ANTHROPIC_API_KEY", self.credential_status
+        )
         if anthropic_key:
-            self.adapters["claude"] = ClaudeAdapter(
-                api_key=anthropic_key
-            )
+            self.adapters["claude"] = ClaudeAdapter(api_key=anthropic_key)
 
         self.tracer = tracer or Tracer()
 
