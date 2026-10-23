@@ -38,6 +38,10 @@ class Master:
             "models": self.orchestrator.available_models(),
             "tools": self.tools.available(),
             "capabilities": self.orchestrator.capabilities(),
+            # Only source/status metadata is exposed, never credential values.
+            "credential_status": dict(
+                getattr(self.orchestrator, "credential_status", {})
+            ),
         }
 
     def route_skill(self, skill: str | Skill) -> dict[str, list[str]]:
