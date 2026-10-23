@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Mapping
+from typing import Any
+
 from adapters.base import Skill
 from core.decomposer import Decomposer
 from core.agent_registry import AgentRegistry
@@ -70,9 +74,7 @@ class Master:
             "agents": self.agent_registry.available(self.tools.available()),
             "capabilities": self.orchestrator.capabilities(),
             # Only source/status metadata is exposed, never credential values.
-            "credential_status": dict(
-                getattr(self.orchestrator, "credential_status", {})
-            ),
+            "credential_status": dict(getattr(self.orchestrator, "credential_status", {})),
         }
 
     def route_skill(self, skill: str | Skill) -> dict[str, list[str]]:
@@ -118,15 +120,17 @@ class Master:
             allowed_tools = set(agent_data["allowed_tools"])
             routed_tools = [name for name in route["tools"] if name in allowed_tools]
 
-            steps.append({
-                "subtask": st.to_dict(),
-                "agent": agent_data,
-                "models": models,
-                "verified_models": self.model_router.verified(st.skill),
-                "fallback_models": self.model_router.fallback(st.skill),
-                "active_models": self.model_router.active(st.skill),
-                "tools": routed_tools,
-            })
+            steps.append(
+                {
+                    "subtask": st.to_dict(),
+                    "agent": agent_data,
+                    "models": models,
+                    "verified_models": self.model_router.verified(st.skill),
+                    "fallback_models": self.model_router.fallback(st.skill),
+                    "active_models": self.model_router.active(st.skill),
+                    "tools": routed_tools,
+                }
+            )
 
         return {
             "task": task,
@@ -138,14 +142,50 @@ class Master:
         """Invoca una herramienta desde el límite de confianza de la aplicación."""
         return await self.tools.execute(tool, **kwargs)
 
-    async def execute_agent_tool(self, agent: str, tool: str, **kwargs):
-        """Invoca una herramienta únicamente si el perfil asignado la permite."""
+    async def execute_agent_tool_call(self, agent: str, tool_call: Mapping[str, Any]) -> Any:
+        """Valida y ejecuta una llamada estructurada en el límite de confianza.
+
+        El modelo solo puede proponer ``{"name": ..., "arguments": {...}}``.
+        El host comprueba registro, permisos del perfil y contrato de argumentos
+        antes de ejecutar; texto libre del modelo nunca se interpreta como código.
+        """
+        if not isinstance(tool_call, Mapping):
+            raise TypeError("tool_call debe ser un objeto con name y arguments.")
+        if set(tool_call) != {"name", "arguments"}:
+            raise ValueError("tool_call debe contener únicamente name y arguments.")
+
+        tool_name = tool_call.get("name")
+        arguments = tool_call.get("arguments")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            raise ValueError("tool_call.name debe ser un nombre no vacío.")
+        if not isinstance(arguments, Mapping):
+            raise TypeError("tool_call.arguments debe ser un objeto.")
+
+        # Confirmar que existe antes de comprobar autorización evita ejecutar
+        # nombres arbitrarios y produce un error controlado para herramientas ausentes.
+        spec = self.tools.get(tool_name)
         profile = self.agent_registry.get(agent)
-        if not self.agent_registry.tool_is_allowed(profile.name, tool):
+        registered_allowed = set(profile.tools_available(self.tools.available()))
+        if tool_name not in registered_allowed:
             raise PermissionError(
-                f"El agente {profile.name!r} no tiene permiso para usar {tool!r}."
+                f"El agente {profile.name!r} no tiene permiso para usar {tool_name!r}."
             )
-        return await self.execute_tool(tool, **kwargs)
+
+        try:
+            inspect.signature(spec.handler).bind(**dict(arguments))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Argumentos inválidos para la herramienta {tool_name!r}: {exc}"
+            ) from exc
+
+        return await self.execute_tool(tool_name, **dict(arguments))
+
+    async def execute_agent_tool(self, agent: str, tool: str, **kwargs):
+        """Compatibilidad: adapta la llamada antigua al contrato estructurado."""
+        return await self.execute_agent_tool_call(
+            agent,
+            {"name": tool, "arguments": kwargs},
+        )
 
     async def execute_task(self, task: str):
         """Descompone y ejecuta una tarea completa mediante el Executor DAG."""

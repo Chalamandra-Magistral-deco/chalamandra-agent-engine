@@ -52,7 +52,11 @@ async def test_master_exposes_agents_and_routes_tasks() -> None:
 
     state = master.inspect()
     assert {agent["name"] for agent in state["agents"]} == {
-        "coordinator", "engineer", "auditor", "sentinel", "analyst"
+        "coordinator",
+        "engineer",
+        "auditor",
+        "sentinel",
+        "analyst",
     }
 
     routed = master.route_agent("Analizar EUR/USD", "analysis")
@@ -87,3 +91,88 @@ async def test_agent_tool_permissions_are_enforced(monkeypatch: pytest.MonkeyPat
             "cost_floor": 10,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_call_executes_only_registered_authorized_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master = Master()
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        calls.append((tool, kwargs))
+        return {"tool": tool, "kwargs": kwargs}
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+    result = await master.execute_agent_tool_call(
+        "analyst",
+        {
+            "name": "search_term_miner",
+            "arguments": {"csv_path": "demo.csv", "profile": "prospecting", "cost_floor": 10},
+        },
+    )
+    assert result == {
+        "tool": "search_term_miner",
+        "kwargs": {"csv_path": "demo.csv", "profile": "prospecting", "cost_floor": 10},
+    }
+    assert calls == [
+        ("search_term_miner", {"csv_path": "demo.csv", "profile": "prospecting", "cost_floor": 10})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_call_rejects_unauthorized_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master = Master()
+    calls: list[str] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        calls.append(tool)
+        return "should not execute"
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+    with pytest.raises(PermissionError, match="no tiene permiso"):
+        await master.execute_agent_tool_call(
+            "sentinel",
+            {"name": "search_term_miner", "arguments": {"csv_path": "demo.csv"}},
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_call_rejects_malformed_envelope_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master = Master()
+    calls: list[str] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        calls.append(tool)
+        return None
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+    with pytest.raises(ValueError, match="únicamente name y arguments"):
+        await master.execute_agent_tool_call(
+            "analyst",
+            {"name": "dynamics", "arguments": {}, "execute": True},
+        )
+    with pytest.raises(TypeError, match="arguments debe ser un objeto"):
+        await master.execute_agent_tool_call("analyst", {"name": "dynamics", "arguments": "{}"})
+    with pytest.raises(ValueError, match="Argumentos inválidos"):
+        await master.execute_agent_tool_call(
+            "analyst", {"name": "dynamics", "arguments": {"unknown_arg": True}}
+        )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_call_rejects_unknown_tool_and_extra_envelope_fields() -> None:
+    master = Master()
+    with pytest.raises(ValueError, match="Herramienta no registrada"):
+        await master.execute_agent_tool_call("analyst", {"name": "shell", "arguments": {}})
+    with pytest.raises(ValueError, match="únicamente name y arguments"):
+        await master.execute_agent_tool_call(
+            "analyst", {"name": "dynamics", "arguments": {}, "agent": "sentinel"}
+        )

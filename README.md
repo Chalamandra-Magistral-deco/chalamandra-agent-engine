@@ -17,7 +17,21 @@ Motor Python de agentes y herramientas de Chalamandra Magistral. Es una bibliote
 
 `core/agent_registry.py` define cinco perfiles deterministas: `coordinator` (CATEDRAL), `engineer`, `auditor`, `sentinel` y `analyst`. El enrutamiento clasifica subtareas usando su descripción y skill; `Master.inspect()` enumera los perfiles y `Master.route_agent()` permite inspeccionar una asignación antes de ejecutar.
 
-`Executor` incluye el perfil asignado y sus herramientas autorizadas en el resultado y los metadatos de la solicitud. La lista de herramientas se filtra contra las herramientas registradas. `Master.execute_agent_tool(agent, tool, ...)` aplica una comprobación de permisos antes de invocarlas; `Master.execute_tool(...)` es una interfaz de confianza para el código anfitrión, no debe exponerse directamente a modelos ni a contenido no confiable.
+`Executor` incluye el perfil asignado y sus herramientas autorizadas en el resultado y los metadatos de la solicitud. La lista de herramientas se filtra contra las herramientas registradas. `Master.execute_agent_tool_call(agent, {"name": ..., "arguments": {...}})` valida la forma de la llamada, que la herramienta esté registrada, que el perfil tenga permiso y que los argumentos encajen con la firma del handler antes de ejecutarlo. `Master.execute_agent_tool(agent, tool, ...)` se conserva como adaptador compatible a esa interfaz. `Master.execute_tool(...)` es una interfaz de confianza para el código anfitrión, no debe exponerse directamente a modelos ni a contenido no confiable.
+
+Ejemplo de invocación anfitriona (el agente debe tener permiso para la herramienta y los argumentos deben satisfacer su contrato):
+
+```python
+result = await engine.execute_agent_tool_call(
+    "analyst",
+    {
+        "name": "catedralx_reasoning",
+        "arguments": {"prices": [1.08, 1.081, 1.079]},
+    },
+)
+```
+
+Esta frontera de ejecución ya está disponible para llamadas estructuradas originadas por el host. No implica que los adaptadores de modelo devuelvan llamadas nativas a herramientas ni que `Executor` las ejecute automáticamente; esa integración queda pendiente y debe reutilizar esta validación en lugar de invocar handlers directamente.
 
 Los perfiles son controles declarativos iniciales, no cinco procesos autónomos aislados. El modelo recibe instrucciones de rol, pero no obtiene ejecución directa del sistema operativo. Los cambios de archivos, despliegues, operaciones financieras y cambios en campañas requieren una interfaz anfitriona explícita y sus propias autorizaciones. `sentinel` no dispone todavía de un escáner Solidity/EVM registrado: no afirmar detección automatizada de vulnerabilidades hasta integrar y probar herramientas específicas.
 
