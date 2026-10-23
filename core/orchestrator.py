@@ -184,35 +184,36 @@ class Orchestrator:
         capabilities = self.capabilities()
 
         if only_verified:
-            return sorted(
-                name
-                for name, info in capabilities.items()
-                if skill_name in info["skills_verified"]
-            )
+            verified_models: list[str] = []
+            for name, info in capabilities.items():
+                verified = info.get("skills_verified")
+                if isinstance(verified, list) and skill_name in verified:
+                    verified_models.append(name)
+            return sorted(verified_models)
 
         active = set(self.adapters.keys())
 
         compatible: set[str] = set()
 
         for name in active:
-            info = MODELS.get(name)
+            model_info = MODELS.get(name)
 
-            if info is None:
+            if model_info is None:
                 # Adapter registrado dinámicamente: solo contamos
                 # las skills verificadas que declara directamente.
-                verified = capabilities.get(
-                    name,
-                    {},
-                ).get("skills_verified", [])
+                verified = capabilities.get(name, {}).get(
+                    "skills_verified",
+                    [],
+                )
 
-                if skill_name in verified:
+                if isinstance(verified, list) and skill_name in verified:
                     compatible.add(name)
 
                 continue
 
             if (
-                skill_name in info.skills_verified
-                or skill_name in info.skills_claimed
+                skill_name in model_info.skills_verified
+                or skill_name in model_info.skills_claimed
             ):
                 compatible.add(name)
 

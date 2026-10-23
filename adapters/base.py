@@ -8,6 +8,8 @@ con la telemetría completa. Sin telemetría, no hay verificación.
 
 from __future__ import annotations
 
+import math
+import os
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -15,6 +17,34 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Lee un entero positivo opcional de la configuración del entorno."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} debe ser un entero positivo") from exc
+    if value < 1:
+        raise ValueError(f"{name} debe ser un entero positivo")
+    return value
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    """Lee un número real finito positivo de la configuración del entorno."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} debe ser un número positivo") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} debe ser un número positivo")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +105,14 @@ class ModelRequest(BaseModel):
     prompt: str
     system_prompt: str | None = None
     temperature: float = 0.0
-    max_tokens: int = 4096
-    timeout_seconds: float = 60.0
+    max_tokens: int = Field(
+        default_factory=lambda: _positive_int_env("DEFAULT_MAX_TOKENS", 4096),
+        ge=1,
+    )
+    timeout_seconds: float = Field(
+        default_factory=lambda: _positive_float_env("DEFAULT_TIMEOUT_SECONDS", 60.0),
+        gt=0,
+    )
     role: ModelRole = ModelRole.AGENT
     skills: list[Skill] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)

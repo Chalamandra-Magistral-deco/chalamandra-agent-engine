@@ -39,7 +39,8 @@ class OllamaAdapter(ModelAdapter):
     ):
         self.base_url = (
             base_url
-            or os.getenv("OLLAMA_BASE_URL", self.DEFAULT_BASE_URL)
+            or os.getenv("OLLAMA_BASE_URL")
+            or self.DEFAULT_BASE_URL
         ).rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", self.default_version)
 

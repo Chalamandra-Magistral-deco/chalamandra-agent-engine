@@ -19,7 +19,9 @@ async def main() -> None:
     print(f"\nCAPABILITIES: {list(caps.keys())}")
     assert "ollama" in caps
     assert caps["ollama"]["registered"] is True
-    assert "reasoning" in caps["ollama"]["skills_verified"]
+    skills_verified = caps["ollama"]["skills_verified"]
+    assert isinstance(skills_verified, list)
+    assert "reasoning" in skills_verified
 
     # 3. Modelos por skill (solo verificados)
     reasoners = o.models_for_skill("reasoning", only_verified=True)

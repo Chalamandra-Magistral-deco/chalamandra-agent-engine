@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from adapters.base import ModelRequest, ModelRole, Skill
 from core.decomposer import Subtask
+from core.agent_registry import AgentRegistry, AgentProfile
 from core.task_validator import TaskValidator
 if TYPE_CHECKING:
     from core.master import Master
@@ -24,6 +25,8 @@ class SubtaskResult:
     errors: list[str] = field(default_factory=list)
     validation_status: str = "SKIPPED"
     validation_errors: list[str] = field(default_factory=list)
+    agent: str = "coordinator"
+    allowed_tools: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,7 +72,7 @@ class Executor:
             )
 
         in_degree = {s.id: len(s.depends_on) for s in subtasks}
-        dependents = {s.id: [] for s in subtasks}
+        dependents: dict[str, list[str]] = {s.id: [] for s in subtasks}
 
         for s in subtasks:
             for dep in s.depends_on:
@@ -120,6 +123,11 @@ class Executor:
         prompt_parts.append(subtask.description)
         full_prompt = "\n".join(prompt_parts)
 
+        profile = self._route_agent(subtask)
+        tool_registry = getattr(self.master, "tools", None)
+        registered_tools = tool_registry.available() if tool_registry is not None else []
+        allowed_tools = list(profile.tools_available(registered_tools))
+
         # Selección centralizada de modelo vía ModelRouter.
         # Prioridad:
         #   1. modelos verificados
@@ -134,14 +142,23 @@ class Executor:
         request = ModelRequest(
             prompt=full_prompt,
             system_prompt=(
-                f"Ejecuta la tarea asignada usando tu habilidad de {subtask.skill}. "
-                "Responde de forma breve y directa."
+                f"Rol asignado: {profile.label}. "
+                f"Objetivo: {profile.mission} "
+                f"{profile.system_instruction} "
+                f"Herramientas autorizadas por este perfil: {', '.join(allowed_tools) or 'ninguna'}. "
+                "No afirmes haber ejecutado herramientas ni acciones externas sin evidencia. "
+                f"Ejecuta la tarea usando la skill {subtask.skill} y responde de forma directa."
             ),
             temperature=0.0,
             max_tokens=64,
             timeout_seconds=60.0,
             role=ModelRole.AGENT,
             skills=[Skill(subtask.skill)],
+            metadata={
+                "agent": profile.name,
+                "allowed_tools": allowed_tools,
+                "tool_execution": "host_mediated",
+            },
         )
 
         response = await self.master.orchestrator.run(model, request)
@@ -177,7 +194,14 @@ class Executor:
             errors=errors,
             validation_status=validation_status,
             validation_errors=validation_errors,
+            agent=profile.name,
+            allowed_tools=allowed_tools,
         )
+
+    def _route_agent(self, subtask: Subtask) -> AgentProfile:
+        """Resuelve el perfil aunque el Master de prueba sea un doble mínimo."""
+        registry = getattr(self.master, "agent_registry", None) or AgentRegistry()
+        return registry.route(subtask.description, subtask.skill)
 
     async def execute_plan(
         self,
@@ -203,7 +227,10 @@ class Executor:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for st, res in zip(level, results):
+                if isinstance(res, asyncio.CancelledError):
+                    raise res
                 if isinstance(res, Exception):
+                    profile = self._route_agent(st)
                     summary.subtask_results[st.id] = SubtaskResult(
                         subtask_id=st.id,
                         description=st.description,
@@ -212,8 +239,11 @@ class Executor:
                         model_used="unknown",
                         status="error",
                         errors=[str(res)],
+                        agent=profile.name,
                     )
                     summary.status = "partial_error"
+                elif isinstance(res, BaseException):
+                    raise res
                 else:
                     summary.subtask_results[st.id] = res
                     if res.status != "ok":

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 from adapters.base import ModelResponse, ModelStatus, ModelRole
 from core.decomposer import Subtask
-from core.executor import Executor, SubtaskResult
+from core.executor import Executor
 
 
 class FakeMaster:
@@ -71,6 +71,10 @@ async def test_execute_plan_mocked():
     assert "0" in summary.subtask_results
     assert summary.subtask_results["0"].output == "Análisis completado"
     assert summary.subtask_results["0"].model_used == "ollama"
+    assert summary.subtask_results["0"].agent == "analyst"
+    request = fake_master.orchestrator.run.await_args.args[1]
+    assert request.metadata["agent"] == "analyst"
+    assert request.metadata["allowed_tools"] == []
 
 
 @pytest.mark.asyncio
@@ -207,3 +211,23 @@ async def test_execute_plan_validation_success():
     assert result.validation_status == "PASS"
     assert not result.validation_errors
     assert summary.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_propagates_cancellation() -> None:
+    import asyncio
+
+    fake_master = FakeMaster()
+    fake_master.orchestrator.run.side_effect = asyncio.CancelledError()
+    executor = Executor(master=fake_master)
+    subtasks = [
+        Subtask(
+            id="cancel",
+            description="Analizar datos",
+            skill="analysis",
+            depends_on=[],
+        )
+    ]
+
+    with pytest.raises(asyncio.CancelledError):
+        await executor.execute_plan("Cancelación", subtasks)

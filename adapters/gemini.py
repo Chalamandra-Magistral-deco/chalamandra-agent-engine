@@ -27,7 +27,7 @@ class GeminiAdapter(ModelAdapter):
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model or self.default_version
+        self.model = model or os.getenv("GEMINI_MODEL") or self.default_version
         if not self.api_key:
             raise ValueError(
                 "GEMINI_API_KEY no configurada. "
