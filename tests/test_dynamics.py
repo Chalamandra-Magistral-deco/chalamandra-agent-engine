@@ -67,3 +67,25 @@ def test_analysis_rejects_non_monotonic_or_non_finite_trajectory():
         analyze_trajectory(np.array([[0.0, 0.0, 0.0], [1.0, 0.1, 0.2], [0.5, 0.2, 0.3]]))
     with pytest.raises(ValueError, match="NaN ni infinitos"):
         analyze_trajectory(np.array([[0.0, 0.0, 0.0], [1.0, np.nan, 0.2], [2.0, 0.2, 0.3]]))
+
+
+def test_dynamics_tool_rejects_excessive_steps_before_computation(monkeypatch):
+    from pipeline import dynamics_tool
+
+    called = []
+
+    def unexpected_calculation(**kwargs):
+        called.append(True)
+        raise RuntimeError("El cálculo no debería iniciarse.")
+
+    monkeypatch.setattr(
+        dynamics_tool, "analyze_equilibrium", unexpected_calculation
+    )
+    result = dynamics_tool.analyze_dynamics(
+        a=1.0, b=1.0, alpha=0.2, gamma=0.1, tau=0.2,
+        duration=2.0, dt=0.000001,
+    )
+
+    assert result["status"] == "error"
+    assert "1000000" in result["error"]
+    assert called == []

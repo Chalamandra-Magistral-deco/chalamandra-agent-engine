@@ -6,6 +6,7 @@ El Master consume el resultado sin conocer la estructura interna de analyze.py.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, is_dataclass
 
 from dynamics.analyze import analyze_trajectory
@@ -15,6 +16,9 @@ from dynamics.stability import (
     local_hopf_boundary,
 )
 from dynamics.sweep import run_case
+
+
+MAX_SIMULATION_STEPS = 1_000_000
 
 
 def _as_dict(obj):
@@ -62,6 +66,25 @@ def analyze_dynamics(
     }
 
     try:
+        if isinstance(duration, bool) or isinstance(dt, bool):
+            raise ValueError("duration y dt deben ser números finitos positivos.")
+
+        duration_value = float(duration)
+        dt_value = float(dt)
+        if not math.isfinite(duration_value) or duration_value <= 0:
+            raise ValueError("duration debe ser finito y mayor que cero.")
+        if not math.isfinite(dt_value) or dt_value <= 0:
+            raise ValueError("dt debe ser finito y mayor que cero.")
+
+        ratio = duration_value / dt_value
+        if not math.isfinite(ratio):
+            raise ValueError("duration/dt es demasiado grande para simularse.")
+        if math.ceil(ratio) > MAX_SIMULATION_STEPS:
+            raise ValueError(
+                f"La herramienta dynamics admite como máximo "
+                f"{MAX_SIMULATION_STEPS} pasos por simulación."
+            )
+
         equilibrium = analyze_equilibrium(
             a=a, b=b, alpha=alpha, gamma=gamma, tau=tau, K=K,
         )
@@ -71,7 +94,7 @@ def analyze_dynamics(
         model = CoupledDelayModel(
             a=a, b=b, alpha=alpha, gamma=gamma, tau=tau, K=K,
         )
-        trajectory = model.simulate(duration=duration, dt=dt)
+        trajectory = model.simulate(duration=duration_value, dt=dt_value)
         analysis = analyze_trajectory(trajectory)
     except Exception as e:
         return {"status": "error", "error": repr(e), "params": params}

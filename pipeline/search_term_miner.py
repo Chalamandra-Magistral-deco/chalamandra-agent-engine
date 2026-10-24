@@ -22,6 +22,9 @@ VALID_PROFILES = {
     "incremental-profit",
 }
 
+MAX_CSV_BYTES = 10 * 1024 * 1024
+MAX_CSV_ROWS = 50_000
+
 ALIASES = {
     "query": (
         "search term",
@@ -230,6 +233,12 @@ def mine_search_terms_tool(
         source = _resolve_csv(csv_path)
 
         with source.open("r", encoding="utf-8-sig", newline="") as stream:
+            opened_size = os.fstat(stream.fileno()).st_size
+            if opened_size > MAX_CSV_BYTES:
+                raise ValueError(
+                    f"El CSV supera el límite de tamaño de {MAX_CSV_BYTES} bytes."
+                )
+
             sample = stream.read(8192)
             stream.seek(0)
 
@@ -282,6 +291,11 @@ def mine_search_terms_tool(
             skipped_empty_query = 0
 
             for row_number, row in enumerate(reader, start=2):
+                if row_number > MAX_CSV_ROWS + 1:
+                    raise ValueError(
+                        f"El CSV supera el límite de {MAX_CSV_ROWS} filas de datos."
+                    )
+
                 query = str(row.get(query_col) or "").strip()
                 if not query:
                     skipped_empty_query += 1

@@ -78,11 +78,11 @@ def test_state_file_must_be_outside_source_checkout(
     monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
     monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
     monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
-    monkeypatch.setattr(bridge, "_resolve_root", lambda _: tmp_path)
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path)
     monkeypatch.setattr(
         bridge,
         "_resolve_state_path",
-        lambda _: tmp_path / "03-OUTPUT" / "hormonas.json",
+        lambda: tmp_path / "03-OUTPUT" / "hormonas.json",
     )
     monkeypatch.setattr(
         bridge,
@@ -102,9 +102,9 @@ def test_explicit_prices_return_signal_without_order_execution(
     monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
     monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
     monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
-    monkeypatch.setattr(bridge, "_resolve_root", lambda _: tmp_path / "CatedralX")
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
     state_path = tmp_path / "state" / "hormonas.json"
-    monkeypatch.setattr(bridge, "_resolve_state_path", lambda _: state_path)
+    monkeypatch.setattr(bridge, "_resolve_state_path", lambda: state_path)
 
     captured: dict = {}
     fake = _fake_module(captured)
@@ -160,9 +160,9 @@ def test_frankfurter_daily_source_runs_catedralx_in_analysis_only_mode(
     monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
     monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
     monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
-    monkeypatch.setattr(bridge, "_resolve_root", lambda _: tmp_path / "CatedralX")
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
     state_path = tmp_path / "state" / "hormonas.json"
-    monkeypatch.setattr(bridge, "_resolve_state_path", lambda _: state_path)
+    monkeypatch.setattr(bridge, "_resolve_state_path", lambda: state_path)
 
     prices = [1.05 + i / 10000 for i in range(60)]
     monkeypatch.setattr(
@@ -211,9 +211,9 @@ def test_conflicting_catedralx_signal_requires_review(
     monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
     monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
     monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
-    monkeypatch.setattr(bridge, "_resolve_root", lambda _: tmp_path / "CatedralX")
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
     state_path = tmp_path / "state" / "hormonas.json"
-    monkeypatch.setattr(bridge, "_resolve_state_path", lambda _: state_path)
+    monkeypatch.setattr(bridge, "_resolve_state_path", lambda: state_path)
 
     captured: dict = {}
     fake = _fake_module(captured)
@@ -250,11 +250,11 @@ def test_financial_risk_flags_require_review(
     monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
     monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
     monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
-    monkeypatch.setattr(bridge, "_resolve_root", lambda _: tmp_path / "CatedralX")
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
     monkeypatch.setattr(
         bridge,
         "_resolve_state_path",
-        lambda _: tmp_path / "state" / "hormonas.json",
+        lambda: tmp_path / "state" / "hormonas.json",
     )
     captured: dict = {}
     fake = _fake_module(captured)
@@ -277,3 +277,38 @@ def test_financial_risk_flags_require_review(
     assert result["orders_created"] is False
     assert result["orders_executed"] is False
     assert "volatility_expansion" in result["consistency_warnings"][0]
+
+
+def test_catedralx_schema_does_not_expose_infrastructure_paths() -> None:
+    parameters = Master().tool_schemas(
+        ["catedralx_reasoning"]
+    )[0]["function"]["parameters"]
+    properties = parameters["properties"]
+
+    assert "catedralx_path" not in properties
+    assert "state_path" not in properties
+
+
+@pytest.mark.parametrize("field", ["catedralx_path", "state_path"])
+def test_model_cannot_override_catedralx_infrastructure_paths(
+    field: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
+    monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
+
+    master = Master()
+    tool_call = {
+        "name": "catedralx_reasoning",
+        "arguments": {
+            "historical_prices": [100.0 + index for index in range(30)],
+            field: "/tmp/untrusted",
+        },
+    }
+
+    with pytest.raises(ValueError, match="Argumentos inválidos"):
+        asyncio.run(master.execute_agent_tool_call("analyst", tool_call))
+
+    assert bridge._ENGINE_MODULE is None

@@ -27,8 +27,8 @@ _ENGINE_STATE_PATH: Path | None = None
 _MIN_PRICE_POINTS = 30
 
 
-def _resolve_root(catedralx_path: str | None) -> Path:
-    configured = catedralx_path or os.getenv("CATEDRALX_PATH")
+def _resolve_root() -> Path:
+    configured = os.getenv("CATEDRALX_PATH")
     candidate = (
         Path(configured).expanduser()
         if configured
@@ -48,8 +48,8 @@ def _resolve_root(catedralx_path: str | None) -> Path:
     return root
 
 
-def _resolve_state_path(state_path: str | None) -> Path:
-    configured = state_path or os.getenv("CATEDRALX_STATE_PATH")
+def _resolve_state_path() -> Path:
+    configured = os.getenv("CATEDRALX_STATE_PATH")
     candidate = (
         Path(configured).expanduser()
         if configured
@@ -188,8 +188,6 @@ def catedralx_reasoning_tool(
     inertia: float = 0.0,
     asset: str = "unspecified",
     cycle_id: int | None = None,
-    catedralx_path: str | None = None,
-    state_path: str | None = None,
     data_source: str = "provided",
     base_currency: str = "EUR",
     quote_currency: str = "USD",
@@ -224,8 +222,8 @@ def catedralx_reasoning_tool(
         inertia_value = _finite_number("inertia", inertia)
         cycle = int(time.time()) if cycle_id is None else int(cycle_id)
 
-        root = _resolve_root(catedralx_path)
-        persisted_state = _resolve_state_path(state_path)
+        root = _resolve_root()
+        persisted_state = _resolve_state_path()
         if persisted_state == root or root in persisted_state.parents:
             raise ValueError(
                 "CATEDRALX_STATE_PATH debe estar fuera del repositorio para proteger sus archivos."

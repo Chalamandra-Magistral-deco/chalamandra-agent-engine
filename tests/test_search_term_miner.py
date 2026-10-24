@@ -1,4 +1,5 @@
 from core.master import Master
+from pipeline import search_term_miner as miner_module
 from pipeline.search_term_miner import mine_search_terms_tool
 
 
@@ -100,3 +101,35 @@ def test_master_registers_search_term_miner():
     assert "search_term_miner" in master.tools.available()
     assert "search_term_miner" in master.route_skill("analysis")["tools"]
     assert "dynamics" in master.route_skill("analysis")["tools"]
+
+
+def test_miner_rejects_csv_over_size_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHALAMANDRA_SEARCH_TERMS_DIR", str(tmp_path))
+    monkeypatch.setattr(miner_module, "MAX_CSV_BYTES", 32)
+    (tmp_path / "large.csv").write_text(
+        "Search term,Cost,Conversions\n"
+        '"buy blue shoes",12.50,2\n',
+        encoding="utf-8",
+    )
+    result = mine_search_terms_tool(
+        csv_path="large.csv", profile="direct-response", cost_floor=5.0
+    )
+    assert result["status"] == "error"
+    assert "tamaño" in result["error"].lower()
+
+
+def test_miner_rejects_csv_over_row_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHALAMANDRA_SEARCH_TERMS_DIR", str(tmp_path))
+    monkeypatch.setattr(miner_module, "MAX_CSV_ROWS", 2)
+    (tmp_path / "too_many_rows.csv").write_text(
+        "Search term,Cost,Conversions\n"
+        '"buy blue shoes",12.50,2\n'
+        '"free blue shoes",8.00,0\n'
+        '"where shoes",1.00,0\n',
+        encoding="utf-8",
+    )
+    result = mine_search_terms_tool(
+        csv_path="too_many_rows.csv", profile="direct-response", cost_floor=5.0
+    )
+    assert result["status"] == "error"
+    assert "2 filas" in result["error"].lower()
