@@ -21,6 +21,7 @@ from core.tool_registry import ToolRegistry
 from pipeline.dynamics_tool import analyze_dynamics
 from pipeline.catedralx_tool import catedralx_reasoning_tool
 from pipeline.search_term_miner import mine_search_terms_tool
+from pipeline.lead_classifier import classify_lead
 
 
 class Master:
@@ -69,6 +70,17 @@ class Master:
             ),
             skills=("analysis", "reasoning"),
             handler=catedralx_reasoning_tool,
+        )
+
+        self.tools.register(
+            name="lead_classifier",
+            description=(
+                "Clasifica un lead del formulario de contacto: tipo, urgencia "
+                "y propuesta sugerida. Determinista, sin LLM, sin red. "
+                "Guarda en JSONL local. No envía respuesta al cliente."
+            ),
+            skills=("analysis", "research", "data"),
+            handler=classify_lead,
         )
 
     def inspect(self) -> dict:
