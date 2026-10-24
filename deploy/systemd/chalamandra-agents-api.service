@@ -1,0 +1,25 @@
+[Unit]
+Description=Chalamandra Agent Engine local API
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/azureuser/workspace/repos/agents
+Environment=PYTHONUNBUFFERED=1
+Environment=CHALAMANDRA_API_HOST=127.0.0.1
+Environment=CHALAMANDRA_API_PORT=8766
+Environment=CHALAMANDRA_API_ENABLE_MODEL_CALLS=false
+ExecStart=/home/azureuser/workspace/repos/agents/venv/bin/python -m api.server
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

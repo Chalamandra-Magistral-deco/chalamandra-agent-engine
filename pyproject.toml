@@ -31,4 +31,4 @@ python_version = "3.12"
 ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
-include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "security*", "core*"]
+include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "security*", "core*", "api*"]
