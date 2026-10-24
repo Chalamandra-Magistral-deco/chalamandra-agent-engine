@@ -290,8 +290,11 @@ async def test_native_tool_call_is_validated_executed_and_returned_to_ollama(
         "catedralx_reasoning",
         "search_term_miner",
     }
+    assert first_request.max_tokens == 256
     followup_request = master.orchestrator.run.await_args_list[1].args[1]
     assert followup_request.messages is not None
+    assert followup_request.messages[0]["role"] == "system"
+    assert "fuente de verdad" in followup_request.messages[0]["content"]
     assert followup_request.messages[-1]["role"] == "tool"
     assert '"ok": true' in followup_request.messages[-1]["content"]
 
