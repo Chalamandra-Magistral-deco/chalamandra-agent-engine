@@ -125,10 +125,17 @@ class Decomposer:
 
             deps: list[str] = []
             for d in item.get("depends_on", []) or []:
-                if isinstance(d, int) and d in idx_to_id:
-                    deps.append(idx_to_id[d])
-                elif isinstance(d, str) and d.isdigit() and int(d) in idx_to_id:
-                    deps.append(idx_to_id[int(d)])
+                # Dependencies may reference only earlier subtasks.
+                # Ignore self-references and forward references to prevent cycles.
+                if isinstance(d, int) and not isinstance(d, bool):
+                    dep_index = d
+                elif isinstance(d, str) and d.isdigit():
+                    dep_index = int(d)
+                else:
+                    continue
+
+                if 0 <= dep_index < i:
+                    deps.append(idx_to_id[dep_index])
 
             description = str(
                 item.get("description", "")
@@ -144,6 +151,17 @@ class Decomposer:
                 depends_on=deps,
                 validation_rules=_infer_validation_rules(description),
             ))
+
+        # Preserve the complete original instruction when a task is decomposed
+        # into one subtask, including arguments and explicit constraints.
+        if len(subtasks) == 1:
+            original_task = task.strip()
+            if original_task and original_task not in subtasks[0].description:
+                subtasks[0].description = (
+                    subtasks[0].description.rstrip()
+                    + "\n\nInstrucción original completa:\n"
+                    + original_task
+                )
 
         # Si la tarea es simple y el modelo no preservó el patrón explícito,
         # recuperamos la regla desde la intención original.
