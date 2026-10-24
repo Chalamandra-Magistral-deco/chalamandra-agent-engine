@@ -142,11 +142,14 @@ class Executor:
                 f"{profile.system_instruction} "
                 f"Herramientas autorizadas por este perfil: {', '.join(allowed_tools) or 'ninguna'}. "
                 "No afirmes haber ejecutado herramientas ni acciones externas sin evidencia. "
+                "Cuando una herramienta devuelva datos estructurados, trátalos como fuente de verdad. "
+                "Conserva exactamente los nombres de campos, valores y unidades; no intercambies métricas ni etiquetas. "
+                "Cita cifras solo si aparecen en los resultados; si un campo no está claro, indícalo. "
                 f"Ejecuta la tarea usando la skill {subtask.skill} y responde de forma directa."
             ),
             temperature=0.0,
-            max_tokens=64,
-            timeout_seconds=60.0,
+            max_tokens=256,
+            timeout_seconds=120.0,
             role=ModelRole.AGENT,
             skills=[Skill(subtask.skill)],
             metadata={
