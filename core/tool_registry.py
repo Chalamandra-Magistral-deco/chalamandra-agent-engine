@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -64,9 +65,13 @@ class ToolRegistry:
         **kwargs: Any,
     ) -> Any:
         tool = self.get(name)
-        result = tool.handler(**kwargs)
 
+        if inspect.iscoroutinefunction(tool.handler):
+            return await tool.handler(**kwargs)
+
+        # Network and CPU-bound synchronous handlers must not block the host's
+        # event loop, particularly when multiple tasks are executed concurrently.
+        result = await asyncio.to_thread(tool.handler, **kwargs)
         if inspect.isawaitable(result):
             return await result
-
         return result

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 import httpx
 
@@ -27,7 +28,7 @@ class GeminiAdapter(ModelAdapter):
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model or self.default_version
+        self.model = model or os.getenv("GEMINI_MODEL") or self.default_version
         if not self.api_key:
             raise ValueError(
                 "GEMINI_API_KEY no configurada. "
@@ -48,15 +49,22 @@ class GeminiAdapter(ModelAdapter):
             "parts": [{"text": request.prompt}],
         })
 
+        generation_config = {
+            "maxOutputTokens": max(request.max_tokens, 512),
+            "thinkingConfig": {
+                "thinkingLevel": "low",
+            },
+        }
+        # Gemini 3.x and later ignore sampling temperature; older families
+        # retain the parameter where it is supported.
+        match = re.match(r"^gemini-(\d+)(?:[.-]|$)", self.model.casefold())
+        major_version = int(match.group(1)) if match else None
+        if major_version is None or major_version < 3:
+            generation_config["temperature"] = request.temperature
+
         payload = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": request.temperature,
-                "maxOutputTokens": max(request.max_tokens, 512),
-                "thinkingConfig": {
-                    "thinkingLevel": "low",
-                },
-            },
+            "generationConfig": generation_config,
         }
 
         url = f"{self.BASE_URL}/{self.model}:generateContent?key={self.api_key}"

@@ -23,7 +23,7 @@ class ClaudeAdapter(ModelAdapter):
     """Adaptador concreto para Anthropic Claude."""
 
     name = "claude"
-    default_version = "claude-sonnet-5"
+    default_version = "claude-sonnet-5-5"
     BASE_URL = "https://api.anthropic.com/v1/messages"
     ANTHROPIC_VERSION = "2023-06-01"
 
@@ -32,7 +32,7 @@ class ClaudeAdapter(ModelAdapter):
         api_key: str | None = None,
         model: str | None = None,
     ):
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+        self.api_key: str = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
         self.model = model or os.getenv(
             "CLAUDE_MODEL",
             self.default_version,

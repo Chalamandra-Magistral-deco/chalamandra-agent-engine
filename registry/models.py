@@ -70,14 +70,14 @@ MODELS: dict[str, ModelInfo] = {
             "web",
         },
         evidence={
-            "note": "adapters/gemini.py escrito, sin API key ni ejecución real",
+            "note": "credencial puede estar configurada; sin ejecución real ni benchmark local",
         },
     ),
 
     "gpt": ModelInfo(
         name="gpt",
         provider="openai",
-        versions=["gpt-5.6-luna"],
+        versions=["gpt-6-luna"],
         skills_claimed={"reasoning", "coding", "analysis"},
         evidence={
             "note": "adapter integrado; pendiente de ejecución/benchmark",
@@ -87,7 +87,7 @@ MODELS: dict[str, ModelInfo] = {
     "claude": ModelInfo(
         name="claude",
         provider="anthropic",
-        versions=["claude-sonnet-5"],
+        versions=["claude-sonnet-5-5"],
         skills_claimed={"documents", "reasoning", "synthesis"},
         evidence={
             "note": "adapter integrado; pendiente de ejecución/benchmark",

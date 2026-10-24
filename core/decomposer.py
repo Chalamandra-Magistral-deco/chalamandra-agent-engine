@@ -134,10 +134,13 @@ class Decomposer:
                 item.get("description", "")
             ).strip()
 
+            requested_skill = str(item.get("skill", "reasoning")).strip().lower()
+            skill = requested_skill if requested_skill in {"reasoning", "analysis"} else "reasoning"
+
             subtasks.append(Subtask(
                 id=sid,
                 description=description,
-                skill=str(item.get("skill", "reasoning")).strip(),
+                skill=skill,
                 depends_on=deps,
                 validation_rules=_infer_validation_rules(description),
             ))

@@ -23,7 +23,7 @@ class GPTAdapter(ModelAdapter):
     """Adaptador concreto para OpenAI GPT."""
 
     name = "gpt"
-    default_version = "gpt-5.6-luna"
+    default_version = "gpt-6-luna"
     BASE_URL = "https://api.openai.com/v1/responses"
 
     def __init__(

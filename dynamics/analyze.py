@@ -147,11 +147,30 @@ def analyze_trajectory(
         period
     """
 
+    try:
+        trajectory = np.asarray(trajectory, dtype=float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("trajectory debe contener datos numéricos") from exc
+
     if trajectory.ndim != 2 or trajectory.shape[1] != 3:
         raise ValueError(
             "trajectory debe tener forma (N, 3): "
             "tiempo, P_bio, P_sint"
         )
+    if not np.all(np.isfinite(trajectory)):
+        raise ValueError("trajectory no puede contener NaN ni infinitos")
+    if (
+        isinstance(growth_windows, bool)
+        or not isinstance(growth_windows, (int, np.integer))
+        or growth_windows < 2
+    ):
+        raise ValueError("growth_windows debe ser un entero >= 2")
+    try:
+        regime_threshold = float(regime_threshold)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("regime_threshold debe ser finito y >= 0") from exc
+    if not np.isfinite(regime_threshold) or regime_threshold < 0:
+        raise ValueError("regime_threshold debe ser finito y >= 0")
 
     time = trajectory[:, 0]
     bio = trajectory[:, 1]
@@ -161,6 +180,8 @@ def analyze_trajectory(
         raise ValueError(
             "Se necesitan al menos 3 muestras"
         )
+    if np.any(np.diff(time) <= 0):
+        raise ValueError("La columna tiempo debe ser estrictamente creciente")
 
     dt = float(
         np.mean(np.diff(time))

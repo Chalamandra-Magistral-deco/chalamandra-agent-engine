@@ -9,6 +9,8 @@ No requiere API key. Coste = 0 USD (modelo local).
 from __future__ import annotations
 
 import os
+from typing import Any
+
 import httpx
 
 from adapters.base import (
@@ -37,21 +39,21 @@ class OllamaAdapter(ModelAdapter):
         base_url: str | None = None,
         model: str | None = None,
     ):
-        self.base_url = (
-            base_url
-            or os.getenv("OLLAMA_BASE_URL", self.DEFAULT_BASE_URL)
-        ).rstrip("/")
+        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL") or self.DEFAULT_BASE_URL).rstrip(
+            "/"
+        )
         self.model = model or os.getenv("OLLAMA_MODEL", self.default_version)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         start_ms = self._now_ms()
 
-        messages: list[dict[str, str]] = []
-        if request.system_prompt:
-            messages.append({"role": "system", "content": request.system_prompt})
-        messages.append({"role": "user", "content": request.prompt})
+        messages: list[dict[str, Any]] = request.messages or []
+        if request.messages is None:
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            messages.append({"role": "user", "content": request.prompt})
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "stream": False,
@@ -60,6 +62,8 @@ class OllamaAdapter(ModelAdapter):
                 "num_predict": request.max_tokens,
             },
         }
+        if request.tools:
+            payload["tools"] = request.tools
 
         url = f"{self.base_url}/api/chat"
 
@@ -90,10 +94,26 @@ class OllamaAdapter(ModelAdapter):
         try:
             message = data.get("message", {})
             output = message.get("content", "")
+            raw_tool_calls = message.get("tool_calls", []) or []
+            tool_calls: list[dict[str, Any]] = []
+            for call in raw_tool_calls:
+                function = call.get("function", {}) if isinstance(call, dict) else {}
+                name = function.get("name")
+                arguments = function.get("arguments", {})
+                if isinstance(name, str) and isinstance(arguments, dict):
+                    tool_calls.append({"name": name, "arguments": arguments})
 
-            if not output and data.get("done_reason") == "load":
+            if not output and not tool_calls and data.get("done_reason") == "load":
                 return self._error_response(
                     request, ModelStatus.REFUSED, "Modelo sin salida (load)", start_ms
+                )
+
+            if not output and not tool_calls:
+                return self._error_response(
+                    request,
+                    ModelStatus.REFUSED,
+                    "Respuesta sin texto ni llamadas a herramientas.",
+                    start_ms,
                 )
 
             return ModelResponse(
@@ -102,6 +122,7 @@ class OllamaAdapter(ModelAdapter):
                 model_version=data.get("model", self.model),
                 role=request.role,
                 output=output,
+                tool_calls=tool_calls,
                 tokens_in=data.get("prompt_eval_count", 0),
                 tokens_out=data.get("eval_count", 0),
                 cost_usd=0.0,  # modelo local, sin coste de API
@@ -110,6 +131,4 @@ class OllamaAdapter(ModelAdapter):
                 raw=data,
             )
         except Exception as e:
-            return self._error_response(
-                request, ModelStatus.ERROR, f"Parse error: {e}", start_ms
-            )
+            return self._error_response(request, ModelStatus.ERROR, f"Parse error: {e}", start_ms)

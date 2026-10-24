@@ -8,6 +8,8 @@ con la telemetría completa. Sin telemetría, no hay verificación.
 
 from __future__ import annotations
 
+import math
+import os
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -17,12 +19,42 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Lee un entero positivo opcional de la configuración del entorno."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} debe ser un entero positivo") from exc
+    if value < 1:
+        raise ValueError(f"{name} debe ser un entero positivo")
+    return value
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    """Lee un número real finito positivo de la configuración del entorno."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} debe ser un número positivo") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} debe ser un número positivo")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Enums canónicos
 # ---------------------------------------------------------------------------
 
+
 class ModelRole(str, Enum):
     """Rol que el sistema asigna al modelo en una llamada concreta."""
+
     AGENT = "agent"
     SPECIALIST = "specialist"
     CRITIC = "critic"
@@ -38,6 +70,7 @@ class ModelRole(str, Enum):
 
 class ModelStatus(str, Enum):
     """Estado final de una llamada a un modelo."""
+
     OK = "ok"
     ERROR = "error"
     TIMEOUT = "timeout"
@@ -46,6 +79,7 @@ class ModelStatus(str, Enum):
 
 class Skill(str, Enum):
     """Skills que el Skill Router puede exigir."""
+
     RESEARCH = "research"
     REASONING = "reasoning"
     CODING = "coding"
@@ -69,21 +103,34 @@ class Skill(str, Enum):
 # Request / Response
 # ---------------------------------------------------------------------------
 
+
 class ModelRequest(BaseModel):
     """Entrada canónica a cualquier modelo."""
+
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str
     system_prompt: str | None = None
     temperature: float = 0.0
-    max_tokens: int = 4096
-    timeout_seconds: float = 60.0
+    max_tokens: int = Field(
+        default_factory=lambda: _positive_int_env("DEFAULT_MAX_TOKENS", 4096),
+        ge=1,
+    )
+    timeout_seconds: float = Field(
+        default_factory=lambda: _positive_float_env("DEFAULT_TIMEOUT_SECONDS", 60.0),
+        gt=0,
+    )
     role: ModelRole = ModelRole.AGENT
     skills: list[Skill] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Native tool definitions and conversation history are optional so adapters
+    # that do not support tool calling remain backward-compatible.
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    messages: list[dict[str, Any]] | None = None
 
 
 class ModelResponse(BaseModel):
     """Salida canónica de cualquier modelo. Trazable y verificable."""
+
     call_id: str
     model: str
     model_version: str = "unknown"
@@ -97,6 +144,7 @@ class ModelResponse(BaseModel):
     status: ModelStatus = ModelStatus.OK
     errors: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = None  # respuesta cruda del proveedor, opcional
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
@@ -106,6 +154,7 @@ class ModelResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Adapter abstracto
 # ---------------------------------------------------------------------------
+
 
 class ModelAdapter(ABC):
     """
