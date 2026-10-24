@@ -303,6 +303,33 @@ def catedralx_reasoning_tool(
             "hurst": perception.get("hurst"),
             "neurovector": getattr(state, "neurovector", []),
             "decisions": decisions_value,
+            "coherencia": (
+                getattr(state, "coherencia", None)
+                or perception.get("coherencia")
+                or {}
+            ),
+            "metacognicion": (
+                getattr(state, "metacognicion", None)
+                or perception.get("metacognicion")
+                or {}
+            ),
+            "contexto_cognitivo": (
+                getattr(state, "contexto_cognitivo", None)
+                or perception.get("contexto_cognitivo")
+                or {}
+            ),
+            "memory": getattr(state, "memory", None) or perception.get("memory") or {},
+            "contraevidencia": (
+                getattr(state, "contraevidencia", None)
+                or perception.get("contraevidencia")
+                or {}
+            ),
+            "sources": getattr(state, "sources", None) or perception.get("sources") or {},
+            "cognitive_gate_reasons": list(
+                getattr(state, "cognitive_gate_reasons", None)
+                or perception.get("cognitive_gate_reasons")
+                or []
+            ),
             "state_saved_to": str(persisted_state),
             "data_source": source,
             "market_data": (

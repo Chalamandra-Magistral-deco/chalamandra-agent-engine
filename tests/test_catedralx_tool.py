@@ -31,6 +31,13 @@ def _fake_module(captured: dict):
         percepcion_espacial={"hurst": 0.51},
         neurovector=[0.1, 0.2],
         decisiones=[],
+        coherencia={"coherencia_direccional": 0.9, "disonancia": 0.05},
+        metacognicion={"riesgo_caos": 0.1},
+        contexto_cognitivo={"fase_actual": "TENDENCIA"},
+        memory={"precision_20_ciclos": 0.75},
+        contraevidencia={"fuerza_contra": 0.0},
+        sources={"decision": {"version": None}},
+        cognitive_gate_reasons=[],
     )
 
     def fake_think(sensory_input, historial_precios, ciclo_id):
@@ -126,6 +133,13 @@ def test_explicit_prices_return_signal_without_order_execution(
     assert result["cycle_id"] == 77
     assert result["orders_created"] is False
     assert result["orders_executed"] is False
+    assert result["coherencia"]["coherencia_direccional"] == 0.9
+    assert result["metacognicion"]["riesgo_caos"] == 0.1
+    assert result["contexto_cognitivo"]["fase_actual"] == "TENDENCIA"
+    assert result["memory"]["precision_20_ciclos"] == 0.75
+    assert result["contraevidencia"]["fuerza_contra"] == 0.0
+    assert result["sources"]["decision"]["version"] is None
+    assert result["cognitive_gate_reasons"] == []
     assert result["state_saved_to"] == str(state_path.resolve())
     assert captured["cycle_id"] == 77
     assert len(captured["history"]) == 31
