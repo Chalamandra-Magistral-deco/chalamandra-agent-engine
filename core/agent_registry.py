@@ -171,14 +171,16 @@ class AgentRegistry:
         )
         implementation_verbs = (
             "implement", "build", "create", "add", "modify", "fix", "refactor",
-            "integrate", "develop", "code", "implementar", "construir", "crear",
-            "agregar", "anadir", "modificar", "corregir", "integrar", "desarrollar",
-            "programar", "escribir",
+            "integrate", "develop", "write code", "code this", "code a", "code an",
+            "code the", "code new", "implementar", "construir", "crear", "agregar",
+            "anadir", "modificar", "corregir", "integrar", "desarrollar", "programar",
+            "escribir",
         )
         audit_terms = (
-            "audit", "auditar", "auditoria", "review", "revisar", "verificar",
-            "validar", "test", "tests", "prueba", "pruebas", "regression",
-            "regresion", "comprobar", "inspect",
+            "audit", "auditar", "audita", "auditoria", "review", "revisar", "revisa",
+            "revise", "revision", "verificar", "verifica", "inspeccionar", "inspecciona",
+            "validar", "valida", "test", "tests", "prueba", "pruebas", "regression",
+            "regresion", "comprobar", "inspect", "inspeccionar",
         )
         analysis_terms = (
             "analyze", "analysis", "analizar", "analisis", "market", "mercado",
@@ -188,8 +190,48 @@ class AgentRegistry:
             "research", "investigar",
         )
 
-        requests_changes = _contains(text, implementation_verbs)
-        if _contains(text, security_domain) and not requests_changes:
+        negated_change_terms = (
+            "without modifying", "without changing", "do not modify", "don't modify",
+            "do not change", "don't change", "do not edit", "don't edit",
+            "do not implement", "don't implement", "do not make changes",
+            "don't make changes", "no modificar", "no modifiques", "no modifique",
+            "sin modificar", "sin modificarlo", "sin editar", "no cambies",
+            "no cambie", "no edites", "no lo modifiques", "no lo modifique",
+            "no lo cambies", "no lo edites", "no hagas cambios",
+            "no se debe modificar",
+        )
+        change_intent_text = text
+        for phrase in negated_change_terms:
+            change_intent_text = re.sub(
+                r"(?<!\w)" + re.escape(phrase) + r"(?!\w)",
+                " ",
+                change_intent_text,
+            )
+        requests_changes = _contains(change_intent_text, implementation_verbs)
+        security_task = _contains(text, security_domain)
+        audit_task = (
+            skill_name in {"verification", "red_team"}
+            or _contains(text, audit_terms)
+        )
+        read_only_terms = (
+            "read-only", "read only", "no changes", "without changes",
+            "without modifying", "without changing", "do not modify",
+            "don't modify", "do not change", "don't change",
+            "do not edit", "don't edit", "do not implement",
+            "don't implement", "do not make changes", "don't make changes",
+            "no modificar", "no modifiques", "no modifique",
+            "sin modificar", "sin modificarlo", "sin editar", "sin cambios",
+            "no cambies", "no cambie", "no edites", "no lo modifiques",
+            "no lo modifique", "no lo cambies", "no lo edites", "no hagas cambios",
+            "solo revisar", "solo auditar", "solo inspeccionar",
+            "unicamente revisar", "no se debe modificar",
+        )
+        read_only_audit = (
+            audit_task and _contains(text, read_only_terms) and not requests_changes
+        )
+        if read_only_audit:
+            return self.get("sentinel" if security_task else "auditor")
+        if security_task and not requests_changes:
             return self.get("sentinel")
         if skill_name in {"coding", "debugging", "automation"} or requests_changes:
             return self.get("engineer")

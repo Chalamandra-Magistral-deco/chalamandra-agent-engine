@@ -190,6 +190,34 @@ def _resolve_csv(csv_path: str) -> Path:
     return resolved
 
 
+def _aggregate_duplicate_queries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate repeated normalized queries before generating recommendations."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        normalized = row["normalized_query"]
+        key = normalized or str(row["query"]).casefold()
+        group = grouped.get(key)
+        if group is None:
+            group = {
+                **row,
+                "cost": 0.0,
+                "conversions": 0.0,
+                "conversion_value": (
+                    0.0 if row["conversion_value"] is not None else None
+                ),
+                "source_rows": 0,
+            }
+            grouped[key] = group
+
+        group["cost"] += row["cost"]
+        group["conversions"] += row["conversions"]
+        if group["conversion_value"] is not None:
+            group["conversion_value"] += row["conversion_value"] or 0.0
+        group["source_rows"] += 1
+
+    return list(grouped.values())
+
+
 def mine_search_terms_tool(
     *,
     csv_path: str,
@@ -352,22 +380,30 @@ def mine_search_terms_tool(
             if str(item).strip()
         }
 
+        decision_rows = _aggregate_duplicate_queries(rows)
+        has_duplicate_queries = any(row["source_rows"] > 1 for row in decision_rows)
         add_candidates: list[dict[str, Any]] = []
         negative_candidates: list[dict[str, Any]] = []
         already_keyword_count = 0
         already_negative_count = 0
 
-        waste_rows: list[dict[str, Any]] = []
+        # Keep raw rows for measured waste metrics; aggregate only the action
+        # candidates, so a repeated query cannot be both added and negated.
+        waste_rows = [
+            row for row in rows
+            if row["conversions"] == 0 and row["cost"] >= cost_floor
+        ]
 
-        for row in rows:
+        for row in decision_rows:
             query = row["query"]
             normalized = row["normalized_query"]
             cost = row["cost"]
             conversions = row["conversions"]
+            source_rows = row["source_rows"]
 
             if conversions >= min_conversions:
                 if normalized in keyword_set:
-                    already_keyword_count += 1
+                    already_keyword_count += source_rows
                 else:
                     add_candidates.append({
                         "query": query,
@@ -392,10 +428,8 @@ def mine_search_terms_tool(
                     })
 
             if conversions == 0 and cost >= cost_floor:
-                waste_rows.append(row)
-
                 if normalized in negative_set:
-                    already_negative_count += 1
+                    already_negative_count += source_rows
                 else:
                     negative_candidates.append({
                         "query": query,
@@ -472,6 +506,12 @@ def mine_search_terms_tool(
             warnings.append(
                 "No se proporcionó la lista actual de negativas; "
                 "las negativas son candidatos pendientes de deduplicación."
+            )
+        if has_duplicate_queries:
+            warnings.append(
+                "Se agregaron consultas repetidas por texto normalizado para generar "
+                "candidatos. El CSV no conserva el contexto de campaña/grupo; revisa "
+                "manualmente las exclusiones por segmento antes de aplicarlas."
             )
         if not conversion_values_available:
             warnings.append(

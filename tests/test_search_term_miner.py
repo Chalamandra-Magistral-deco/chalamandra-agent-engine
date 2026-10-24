@@ -133,3 +133,34 @@ def test_miner_rejects_csv_over_row_limit(tmp_path, monkeypatch):
     )
     assert result["status"] == "error"
     assert "2 filas" in result["error"].lower()
+
+
+
+def test_miner_aggregates_repeated_queries_before_recommending(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHALAMANDRA_SEARCH_TERMS_DIR", str(tmp_path))
+    report = tmp_path / "repeated.csv"
+    report.write_text(
+        "Search term,Cost,Conversions,Conv. value\n"
+        '"buy blue shoes",12.50,1,120\n'
+        '"buy blue shoes",8.00,0,0\n',
+        encoding="utf-8",
+    )
+
+    result = mine_search_terms_tool(
+        csv_path="repeated.csv",
+        profile="direct-response",
+        cost_floor=5.0,
+        min_conversions=1.0,
+    )
+
+    assert result["status"] == "ok"
+    assert result["counts"]["rows_processed"] == 2
+    assert result["counts"]["add_candidates"] == 1
+    assert result["counts"]["negative_candidates"] == 0
+    candidate = result["maintenance_diff"]["add"][0]
+    assert candidate["cost"] == 20.5
+    assert candidate["conversions"] == 1.0
+    assert candidate["conversion_value"] == 120.0
+    assert result["summary"]["measured_spend"] == 20.5
+    assert result["summary"]["measured_waste_spend"] == 8.0
+    assert any("campaña/grupo" in warning for warning in result["warnings"])

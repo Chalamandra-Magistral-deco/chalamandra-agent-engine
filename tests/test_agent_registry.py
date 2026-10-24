@@ -176,3 +176,23 @@ async def test_structured_tool_call_rejects_unknown_tool_and_extra_envelope_fiel
         await master.execute_agent_tool_call(
             "analyst", {"name": "dynamics", "arguments": {}, "agent": "sentinel"}
         )
+
+
+@pytest.mark.parametrize(
+    ("description", "skill", "expected"),
+    [
+        ("Review this code; do not modify it", "coding", "auditor"),
+        ("Revisa este código, no lo modifiques", "coding", "auditor"),
+        ("Audit this Solidity smart contract; do not modify it", "coding", "sentinel"),
+        ("Review and modify this code", "reasoning", "engineer"),
+        (
+            "Review this code and implement a fix; do not modify unrelated tests",
+            "coding",
+            "engineer",
+        ),
+    ],
+)
+def test_read_only_audit_routes_to_auditor_before_implementation_keyword(
+    description: str, skill: str, expected: str
+) -> None:
+    assert AgentRegistry().route(description, skill).name == expected

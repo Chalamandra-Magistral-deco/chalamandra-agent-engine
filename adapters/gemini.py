@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 
 import httpx
 
@@ -48,15 +49,22 @@ class GeminiAdapter(ModelAdapter):
             "parts": [{"text": request.prompt}],
         })
 
+        generation_config = {
+            "maxOutputTokens": max(request.max_tokens, 512),
+            "thinkingConfig": {
+                "thinkingLevel": "low",
+            },
+        }
+        # Gemini 3.x and later ignore sampling temperature; older families
+        # retain the parameter where it is supported.
+        match = re.match(r"^gemini-(\d+)(?:[.-]|$)", self.model.casefold())
+        major_version = int(match.group(1)) if match else None
+        if major_version is None or major_version < 3:
+            generation_config["temperature"] = request.temperature
+
         payload = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": request.temperature,
-                "maxOutputTokens": max(request.max_tokens, 512),
-                "thinkingConfig": {
-                    "thinkingLevel": "low",
-                },
-            },
+            "generationConfig": generation_config,
         }
 
         url = f"{self.BASE_URL}/{self.model}:generateContent?key={self.api_key}"
