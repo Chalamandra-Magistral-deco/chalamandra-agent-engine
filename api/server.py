@@ -11,6 +11,7 @@ import hmac
 import ipaddress
 import json
 import os
+from api import job_manager
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
@@ -159,6 +160,32 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         path = urlsplit(self.path).path
+        if path.startswith("/v1/results/"):
+            result_id = path.split("/")[-1]
+            result = job_manager.get_result(result_id)
+            if not result:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
+
+        if path.startswith("/v1/jobs/"):
+            job_id = path.split("/")[-1]
+            job = job_manager.get_job_status(job_id)
+            if not job:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "job_not_found"})
+                return
+            self._send_json(HTTPStatus.OK, {
+                "job_id": job_id,
+                "status": job.get("status", "queued"),
+                "trace_id": job.get("trace_id", ""),
+                "updated_at": job.get("updated_at", job.get("accepted_at", "")),
+                "result_id": job.get("result_id"),
+                "reason_code": job.get("reason"),
+                "message": None
+            })
+            return
+
         if path == "/healthz":
             self._send_json(
                 HTTPStatus.OK,
@@ -195,6 +222,27 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         path = urlsplit(self.path).path
+        if path == "/v1/jobs":
+            idem_key = self.headers.get("Idempotency-Key")
+            if not idem_key or len(idem_key) < 8:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
+                return
+            body = self._read_json_body()
+            if not body:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+                return
+            
+            job_id = job_manager.submit_job(body, idem_key)
+            job = job_manager.get_job_status(job_id)
+            
+            self._send_json(HTTPStatus.ACCEPTED, {
+                "job_id": job_id,
+                "status": "queued",
+                "trace_id": job.get("trace_id", ""),
+                "accepted_at": job.get("accepted_at", "")
+            })
+            return
+
         if path in {"/v1/plan", "/v1/tasks"} and not self.server.model_calls_enabled:
             self._send_json(
                 HTTPStatus.FORBIDDEN,
