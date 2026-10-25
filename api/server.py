@@ -131,7 +131,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         return hmac.compare_digest(supplied[len(prefix):], token)
 
     def _get_trace_id(self) -> str:
-        return self.headers.get("X-Trace-Id", str(uuid.uuid4()))
+        traceparent = self.headers.get("traceparent")
+        if traceparent and "-" in traceparent:
+            parts = traceparent.split("-")
+            if len(parts) == 4 and len(parts[1]) == 32:
+                return parts[1]
+        # Fallback a UUID v4 (W3C compatible hex si se prefiere, usamos uuid por compatibilidad)
+        return str(uuid.uuid4()).replace("-", "")
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -276,6 +282,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
             try:
+                if "signature" not in body:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing_signature"})
+                    return
                 decision_id = acceptance_store.record_acceptance(body)
                 
                 # FASE 4: Si es aceptado, disparar webhooks de distribución
@@ -302,7 +311,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             
             run_id = str(uuid.uuid4())
             task_id = str(uuid.uuid4())
-            trace_id = body.get("trace_id", str(uuid.uuid4()))
+            trace_id = self._get_trace_id()
             
             contract = {
                 "task_id": task_id,
