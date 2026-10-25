@@ -6,8 +6,6 @@ implementación por defecto falla cerrada y no acepta tokens sin verificar.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Annotated, Any, Callable
 
@@ -92,9 +90,7 @@ def create_app(
 
             result = await run_financial_flow(
                 payload,
-                analyzer=analyzer
-                if analyzer is not None
-                else _default_analyzer,
+                analyzer=analyzer if analyzer is not None else _default_analyzer,
                 reviewer=reviewer,
             )
             app.state.idempotency[cache_key] = (body_hash, result)
