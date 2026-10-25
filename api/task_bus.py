@@ -5,8 +5,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from api import jsonl_store
+
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return jsonl_store.state_dir()
 
 def _db_path() -> Path:
     path = _state_dir() / "tasks.db"
