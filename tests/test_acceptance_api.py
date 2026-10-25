@@ -19,6 +19,14 @@ def api_server(monkeypatch):
     server.shutdown()
     thread.join()
 
+def _get(url, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
+
 def _post(url, data, headers=None):
     headers = headers or {}
     headers["Content-Type"] = "application/json"
@@ -29,30 +37,63 @@ def _post(url, data, headers=None):
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
 
+# === TESTS ORIGINALES RESTAURADOS (4) ===
+@patch("api.job_manager.get_result")
+@patch("api.acceptance_store.get_acceptance")
+def test_get_result_blocked_without_acceptance(mock_acc, mock_res, api_server):
+    mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}
+    mock_acc.return_value = None
+    status, body = _get(f"{api_server}/v1/results/test-123", {"Authorization": "Bearer test-token"})
+    assert status == 202
+    assert body["status"] == "pending_verification"
+
+@patch("api.job_manager.get_result")
+@patch("api.acceptance_store.get_acceptance")
+def test_get_result_delivered_with_acceptance(mock_acc, mock_res, api_server):
+    mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}
+    mock_acc.return_value = {"outcome": "accepted"}
+    status, body = _get(f"{api_server}/v1/results/test-123", {"Authorization": "Bearer test-token"})
+    assert status == 200
+    assert body["result_id"] == "test-123"
+
+@patch("api.job_manager.get_result")
+@patch("api.acceptance_store.get_acceptance")
+def test_get_result_blocked_with_rejection(mock_acc, mock_res, api_server):
+    mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}
+    mock_acc.return_value = {"outcome": "rejected", "reasons": ["bad data"]}
+    status, body = _get(f"{api_server}/v1/results/test-123", {"Authorization": "Bearer test-token"})
+    assert status == 403
+    assert body["error"] == "result_not_accepted"
+
+def test_post_acceptance_persists_record(api_server, tmp_path):
+    with patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acc.jsonl"):
+        payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted",
+                   "verifier_id": "tester", "evidence_digest": "h", "trace_id": "t"}
+        payload["signature"] = acceptance_store.generate_signature(payload)
+        status, body = _post(f"{api_server}/v1/acceptance", payload, {"Authorization": "Bearer test-token"})
+        assert status == 201
+        assert (tmp_path / "acc.jsonl").exists()
+
+# === TESTS NUEVOS HMAC (3) ===
 def test_acceptance_without_signature_fails(api_server):
-    headers = {"Authorization": "Bearer test-token"}
-    payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted", "verifier_id": "tester"}
-    status, body = _post(f"{api_server}/v1/acceptance", payload, headers)
+    payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted"}
+    status, body = _post(f"{api_server}/v1/acceptance", payload, {"Authorization": "Bearer test-token"})
     assert status == 400
     assert "firma" in body["error"].lower() or "signature" in body["error"].lower()
 
 def test_acceptance_with_invalid_signature_fails(api_server):
-    headers = {"Authorization": "Bearer test-token"}
     payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted", "signature": "bad-hash"}
-    status, body = _post(f"{api_server}/v1/acceptance", payload, headers)
+    status, body = _post(f"{api_server}/v1/acceptance", payload, {"Authorization": "Bearer test-token"})
     assert status == 400
     assert "firma" in body["error"].lower() or "signature" in body["error"].lower()
 
-def test_acceptance_with_valid_signature_passes(api_server):
-    headers = {"Authorization": "Bearer test-token"}
-    payload = {
-        "decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted", 
-        "evidence_digest": "hash123", "trace_id": "trace-1", "verifier_id": "tester"
-    }
-    # Generar firma correcta usando la función interna
-    from api.acceptance_store import generate_signature
-    payload["signature"] = generate_signature(payload)
-    
-    status, body = _post(f"{api_server}/v1/acceptance", payload, headers)
-    assert status == 201
-    assert body["decision_id"] == "dec-1"
+def test_acceptance_with_tampered_field_fails(api_server):
+    payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted",
+               "verifier_id": "tester", "evidence_digest": "h", "trace_id": "t",
+               "reasons": ["ok"]}
+    payload["signature"] = acceptance_store.generate_signature(payload)
+    # Alterar un campo DESPUÉS de firmar
+    payload["reasons"] = ["tampered"]
+    status, body = _post(f"{api_server}/v1/acceptance", payload, {"Authorization": "Bearer test-token"})
+    assert status == 400
+    assert "firma" in body["error"].lower() or "signature" in body["error"].lower()

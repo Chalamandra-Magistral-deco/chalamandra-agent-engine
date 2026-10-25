@@ -37,30 +37,32 @@ def _verifier_secret() -> bytes:
         raise ValueError("CHALAMANDRA_VERIFIER_SECRET no configurado. El verificador no puede operar.")
     return secret.encode("utf-8")
 
+def _canonical_payload(decision: dict) -> str:
+    """Serializa TODOS los campos canónicos de la decisión de forma estable."""
+    fields = [
+        "decision_id", "candidate_id", "outcome", "criteria_checked",
+        "reasons", "missing_evidence", "verifier_id", "evidence_digest",
+        "decided_at", "trace_id"
+    ]
+    payload = {k: decision.get(k) for k in fields}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
 def generate_signature(decision: dict) -> str:
-    """Genera la firma HMAC-SHA256 de los campos canónicos de la decisión."""
-    payload = "|".join([
-        str(decision.get("candidate_id", "")),
-        str(decision.get("outcome", "")),
-        str(decision.get("evidence_digest", "")),
-        str(decision.get("trace_id", "")),
-        str(decision.get("verifier_id", ""))
-    ])
-    return hmac.new(_verifier_secret(), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    """Genera la firma HMAC-SHA256 sobre TODOS los campos canónicos."""
+    return hmac.new(_verifier_secret(), _canonical_payload(decision).encode("utf-8"), hashlib.sha256).hexdigest()
 
 def record_acceptance(decision: dict[str, Any]) -> str:
     decision_id = decision.get("decision_id")
     if not decision_id:
         raise ValueError("decision_id es requerido")
     
-    # Verificación criptográfica obligatoria
     provided_sig = decision.get("signature")
     if not provided_sig:
         raise ValueError("Firma criptográfica (signature) requerida para aceptar una decisión.")
     
     expected_sig = generate_signature(decision)
     if not hmac.compare_digest(provided_sig, expected_sig):
-        raise ValueError("Firma criptográfica inválida. Verificador no autorizado o evidencia alterada.")
+        raise ValueError("Firma criptográfica inválida. Verificador no autorizado o decisión alterada.")
     
     record = {
         "decision_id": decision_id,

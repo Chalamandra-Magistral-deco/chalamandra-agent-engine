@@ -131,13 +131,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         return hmac.compare_digest(supplied[len(prefix):], token)
 
     def _get_trace_id(self) -> str:
-        traceparent = self.headers.get("traceparent")
-        if traceparent and "-" in traceparent:
-            parts = traceparent.split("-")
-            if len(parts) == 4 and len(parts[1]) == 32:
-                return parts[1]
-        # Fallback a UUID v4 (W3C compatible hex si se prefiere, usamos uuid por compatibilidad)
-        return str(uuid.uuid4()).replace("-", "")
+        """Parser estricto W3C Trace Context v00."""
+        import re
+        traceparent = self.headers.get("traceparent", "")
+        # Formato: version(2hex)-trace_id(32hex no-cero)-parent_id(16hex no-cero)-flags(2hex)
+        m = re.match(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent)
+        if m:
+            tid = m.group(1)
+            pid = m.group(2)
+            if tid != "0" * 32 and pid != "0" * 16:
+                return tid
+        return uuid.uuid4().hex
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
