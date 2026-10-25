@@ -226,6 +226,24 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {"items": subs})
             return
 
+        if path.startswith("/internal/v1/orchestration/runs/"):
+            run_id = path.split("/")[-1]
+            # Buscamos en el bus (simulamos leyendo todas las tareas asociadas a ese run)
+            tasks = task_bus._read_all(task_bus._tasks_file())
+            run_tasks = [t for t in tasks if t.get("run_id") == run_id]
+            if not run_tasks:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
+                return
+            status = "completed" if all(t["status"] == "completed" for t in run_tasks) else "executing"
+            self._send_json(HTTPStatus.OK, {
+                "run_id": run_id,
+                "status": status,
+                "task_ids": [t["task_id"] for t in run_tasks],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "trace_id": run_tasks[0].get("trace_id", "")
+            })
+            return
+
         if path == "/healthz":
             self._send_json(
                 HTTPStatus.OK,
@@ -257,7 +275,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self) -> None:
-        path = urllib.parse.urlparse(self.path).path
+        path = urllib.parse.urlsplit(self.path).path
         if not self._authorized(require_token=True):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
@@ -333,6 +351,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 "status": "queued",
                 "trace_id": trace_id
             })
+            return
+
+        if path.startswith("/internal/v1/tasks/") and path.endswith("/results"):
+            task_id = path.split("/")[-2]
+            body = self._read_json_body()
+            if not body:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+                return
+            # En un caso real, aquí validaríamos la identidad del worker (serviceBearerAuth)
+            task_bus.mark_task_completed(task_id, body)
+            self._send_json(HTTPStatus.ACCEPTED, {"candidate_id": body.get("candidate_id"), "verification_status": "pending", "trace_id": body.get("trace_id")})
             return
 
         if path == "/v1/jobs":

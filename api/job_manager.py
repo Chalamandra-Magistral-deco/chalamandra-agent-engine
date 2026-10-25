@@ -76,14 +76,40 @@ def _run_job(job_id: str):
     catedral_repo = Path("/home/azureuser/workspace/repos/CatedralX")
     
     try:
-        # Ejecutamos el CLI de CatedralX en un subproceso aislado
+        # Extraer el payload del job
+        job_records = [r for r in _read_all(_jobs_file()) if r.get("job_id") == job_id]
+        payload = job_records[0].get("payload", {}) if job_records else {}
+        
+        # Crear snapshot temporal con los datos de la petición
+        import tempfile
+        snapshot = {
+            "PERCEIVE": {
+                "historial_precios": payload.get("historical_prices", []),
+                "precio": payload.get("current_price", 0.0),
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "source": "api_request"
+            }
+        }
+        fd, temp_path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, 'w') as f:
+            json.dump(snapshot, f)
+            
+        env = os.environ.copy()
+        env["CATEDRALX_SNAPSHOT_PATH"] = temp_path
+        
+        # Ejecutamos el CLI de CatedralX con el snapshot temporal
         result = subprocess.run(
             ["bash", "BIN/catedral", "motor"],
             cwd=catedral_repo,
+            env=env,
             capture_output=True,
             text=True,
             timeout=60
         )
+        
+        # Limpiamos el temporal
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
         
         # Parsear stdout buscando el JSON
         stdout = result.stdout.strip()
