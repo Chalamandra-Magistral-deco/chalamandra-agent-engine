@@ -11,8 +11,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 from api import subscription_store
 
+from api import jsonl_store
+
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return jsonl_store.state_dir()
 
 def _dead_letter_file() -> Path:
     return _state_dir() / "dead_letters.jsonl"
