@@ -46,7 +46,7 @@ def _post(url, data, headers=None):
         return e.code, json.loads(e.read().decode())
 
 # === TESTS ORIGINALES RESTAURADOS (4) ===
-@patch("api.job_manager.get_result")
+@patch("api.candidate_store.get_candidate")
 @patch("api.acceptance_store.get_acceptance")
 def test_get_result_blocked_without_acceptance(mock_acc, mock_res, api_server):
     mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}
@@ -55,7 +55,7 @@ def test_get_result_blocked_without_acceptance(mock_acc, mock_res, api_server):
     assert status == 202
     assert body["status"] == "pending_verification"
 
-@patch("api.job_manager.get_result")
+@patch("api.candidate_store.get_candidate")
 @patch("api.acceptance_store.get_acceptance")
 def test_get_result_delivered_with_acceptance(mock_acc, mock_res, api_server):
     mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}
@@ -64,7 +64,7 @@ def test_get_result_delivered_with_acceptance(mock_acc, mock_res, api_server):
     assert status == 200
     assert body["result_id"] == "test-123"
 
-@patch("api.job_manager.get_result")
+@patch("api.candidate_store.get_candidate")
 @patch("api.acceptance_store.get_acceptance")
 def test_get_result_blocked_with_rejection(mock_acc, mock_res, api_server):
     mock_res.return_value = {"result_id": "test-123", "status": "ACCEPTED"}

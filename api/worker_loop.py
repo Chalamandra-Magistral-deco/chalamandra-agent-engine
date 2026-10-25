@@ -74,6 +74,11 @@ def process_task(task: dict) -> dict:
             if result.get("status") == "ACCEPTED":
                 summary = f"Análisis financiero completado: {result.get('decision')}"
                 status = "candidate"
+                # P0-5: Usar el result_id de CatedralX como candidate_id para unificar identidades
+                result_id = result.get("result_id")
+                if result_id:
+                    task_bus.mark_task_completed(task_id, {"status": "candidate", "candidate_id": result_id}, result_id)
+                
                 evidence.append({
                     "evidence_id": str(uuid.uuid4()),
                     "kind": "calculation",

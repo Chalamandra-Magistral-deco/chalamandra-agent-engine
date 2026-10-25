@@ -1,0 +1,14 @@
+[Unit]
+Description=Chalamandra Task Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/azureuser/workspace/repos/agents
+Environment=PYTHONPATH=/home/azureuser/workspace/repos/agents
+ExecStart=/home/azureuser/workspace/repos/agents/venv/bin/python -m api.worker_loop
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

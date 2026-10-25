@@ -18,6 +18,7 @@ from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
 from api import task_bus
+from api import candidate_store
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
@@ -188,7 +189,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             result_id = path.split("/")[-1]
-            result = job_manager.get_result(result_id)
+            # P0-5 / P1-6: Buscar en el candidate_store unificado
+            result = candidate_store.get_candidate(result_id)
             if not result:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
                 return
