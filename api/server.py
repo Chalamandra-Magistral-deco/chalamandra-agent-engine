@@ -13,7 +13,6 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
-from api import job_manager
 from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
