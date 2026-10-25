@@ -11,8 +11,10 @@ import hmac
 import ipaddress
 import json
 import os
+import uuid
 from api import job_manager
 from api import acceptance_store
+from api import task_bus
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
@@ -254,6 +256,34 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 })
             except ValueError as e:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
+            return
+
+        if path == "/internal/v1/orchestration/runs":
+            body = self._read_json_body()
+            if not body or "objective" not in body:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_trigger"})
+                return
+            
+            run_id = str(uuid.uuid4())
+            task_id = str(uuid.uuid4())
+            trace_id = body.get("trace_id", str(uuid.uuid4()))
+            
+            contract = {
+                "task_id": task_id,
+                "run_id": run_id,
+                "objective": body["objective"],
+                "required_tools": body.get("permissions", {}).get("allowed_tools", []),
+                "success_criteria": body.get("success_criteria", ["Task completed"]),
+                "trace_id": trace_id
+            }
+            
+            task_bus.enqueue_task(contract)
+            
+            self._send_json(HTTPStatus.ACCEPTED, {
+                "run_id": run_id,
+                "status": "queued",
+                "trace_id": trace_id
+            })
             return
 
         if path == "/v1/jobs":
