@@ -119,16 +119,24 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _authorized(self, *, require_token: bool = False) -> bool:
-        token = self.server.api_token
-        if token is None:
-            # Read-only health/discovery can be local; every POST needs a token.
-            return self.server.host_is_loopback and not require_token
-        supplied = self.headers.get("Authorization", "")
-        prefix = "Bearer "
-        if not supplied.startswith(prefix):
+    def _authorized(self, *, require_token: bool = False, required_scope: str | None = None) -> bool:
+        if not require_token:
+            return True
+        import jwt
+        auth = self.headers.get("Authorization", "")
+        token = auth.replace("Bearer ", "").strip()
+        secret = os.environ.get("CHALAMANDRA_JWT_SECRET", "")
+        if not secret or not token:
             return False
-        return hmac.compare_digest(supplied[len(prefix):], token)
+        try:
+            payload = jwt.decode(token, secret, algorithms=["HS256"])
+            if required_scope:
+                scopes = payload.get("scope", "").split()
+                if required_scope not in scopes:
+                    return False
+            return True
+        except jwt.PyJWTError:
+            return False
 
     def _get_trace_id(self) -> str:
         """Parser estricto W3C Trace Context v00."""

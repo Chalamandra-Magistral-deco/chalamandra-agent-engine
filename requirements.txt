@@ -5,3 +5,4 @@ azure-identity>=1.19.0
 azure-keyvault-secrets>=4.9.0
 numpy==2.5.3
 scipy==1.18.1
+PyJWT>=2.8.0

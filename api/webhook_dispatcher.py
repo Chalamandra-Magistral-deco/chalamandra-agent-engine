@@ -1,12 +1,25 @@
-"""Despachador de Webhooks para Distribution Flow (Fase 4)."""
+"""Despachador de Webhooks con reintentos y Dead Letter Queue (P0-3)."""
 import json
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from pathlib import Path
 from api import subscription_store
 
+def _state_dir() -> Path:
+    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+
+def _dead_letter_file() -> Path:
+    return _state_dir() / "dead_letters.jsonl"
+
+def _log_dead_letter(url: str, payload: dict, error: str):
+    _dead_letter_file().parent.mkdir(parents=True, exist_ok=True)
+    record = {"url": url, "payload": payload, "error": error, "timestamp": datetime.now(timezone.utc).isoformat()}
+    with _dead_letter_file().open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
 def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
-    """Envía el evento a todas las suscripciones activas que lo soliciten."""
     subs = subscription_store.list_subscriptions()
     active_subs = [s for s in subs if s.get("status") == "enabled" and event_type in s.get("event_types", [])]
     
@@ -14,7 +27,7 @@ def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
         return 0
         
     payload = {
-        "event_id": trace_id, # Usamos el trace_id como event_id para simplificar
+        "event_id": trace_id,
         "event_type": event_type,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "result_id": result_id,
@@ -28,18 +41,22 @@ def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
     for sub in active_subs:
         url = sub["endpoint_url"]
         req = urllib.request.Request(
-            url,
-            data=data,
+            url, data=data,
             headers={"Content-Type": "application/json", "User-Agent": "Chalamandra-Webhook/1.0"},
             method="POST"
         )
-        try:
-            # Hacemos la petición con un timeout de 5 segundos
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if 200 <= resp.status < 300:
-                    success_count += 1
-        except urllib.error.URLError as e:
-            # En producción, aquí se registraría el fallo para reintentos
-            print(f"Fallo al enviar webhook a {url}: {e}")
-            
+        
+        # 3 reintentos con backoff exponencial
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if 200 <= resp.status < 300:
+                        success_count += 1
+                        break
+            except Exception as e:
+                if attempt == 2:
+                    _log_dead_letter(url, payload, str(e))
+                else:
+                    time.sleep(2 ** attempt)
+                    
     return success_count
