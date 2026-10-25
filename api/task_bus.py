@@ -1,4 +1,4 @@
-"""Task Bus atómico usando SQLite (Fase 1)."""
+"""Task Bus atómico usando SQLite (Fase 1 corregida)."""
 import json
 import sqlite3
 import uuid
@@ -16,18 +16,12 @@ def _db_path() -> Path:
 def _get_conn():
     conn = sqlite3.connect(str(_db_path()), timeout=10)
     conn.row_factory = sqlite3.Row
-    # Habilitar WAL para mejor concurrencia
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
 def init_db():
     with _get_conn() as conn:
-        # Migración: añadir columna payload si no existe
-        cursor = conn.execute("PRAGMA table_info(tasks)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if "payload" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN payload TEXT")
-            
+        # 1. Crear tabla base primero (P0-1 corregido)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
@@ -38,11 +32,17 @@ def init_db():
                 status TEXT NOT NULL,
                 trace_id TEXT,
                 candidate_result TEXT,
-                payload TEXT,
                 created_at TEXT,
                 updated_at TEXT
             )
         """)
+        # 2. Migración de columna payload (después de crear tabla)
+        cursor = conn.execute("PRAGMA table_info(tasks)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if "payload" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN payload TEXT")
+        if "result_id" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN result_id TEXT")
 
 def enqueue_task(contract: dict) -> str:
     init_db()
@@ -67,50 +67,43 @@ def enqueue_task(contract: dict) -> str:
     return task_id
 
 def get_next_task() -> dict | None:
-    """Reserva atómicamente la siguiente tarea en cola."""
     init_db()
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
-        # BEGIN IMMEDIATE previene condiciones de carrera
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT * FROM tasks WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
-        
+        row = conn.execute("SELECT * FROM tasks WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1").fetchone()
         if not row:
             conn.execute("COMMIT")
             return None
-            
-        # Actualización atómica a running
-        conn.execute(
-            "UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ? AND status = 'queued'",
-            (now, row["task_id"])
-        )
+        conn.execute("UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ? AND status = 'queued'", (now, row["task_id"]))
         conn.execute("COMMIT")
-        
-        # Verificar que la actualización fue exitosa (por si otro proceso la tomó)
-        updated = conn.execute(
-            "SELECT * FROM tasks WHERE task_id = ? AND status = 'running'",
-            (row["task_id"],)
-        ).fetchone()
-        
+        updated = conn.execute("SELECT * FROM tasks WHERE task_id = ? AND status = 'running'", (row["task_id"],)).fetchone()
         if not updated:
             return None
-            
         return dict(updated)
 
-def mark_task_completed(task_id: str, candidate_result: dict):
+def mark_task_completed(task_id: str, candidate_result: dict, result_id: str | None = None):
+    """Marca la tarea como terminada propagando el estado real del candidato (P0-4)."""
     now = datetime.now(timezone.utc).isoformat()
+    # Extraer el estado del candidato (candidate, failed, blocked)
+    candidate_status = candidate_result.get("status", "failed")
+    
     with _get_conn() as conn:
         conn.execute(
-            "UPDATE tasks SET status = 'completed', candidate_result = ?, updated_at = ? WHERE task_id = ?",
-            (json.dumps(candidate_result), now, task_id)
+            "UPDATE tasks SET status = ?, candidate_result = ?, result_id = ?, updated_at = ? WHERE task_id = ?",
+            (candidate_status, json.dumps(candidate_result), result_id, now, task_id)
         )
+
+def get_task_status(task_id: str) -> dict | None:
+    init_db()
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        if not row:
+            return None
+        return dict(row)
 
 def get_run_tasks(run_id: str) -> list[dict]:
     init_db()
     with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM tasks WHERE run_id = ?", (run_id,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM tasks WHERE run_id = ?", (run_id,)).fetchall()
         return [dict(r) for r in rows]

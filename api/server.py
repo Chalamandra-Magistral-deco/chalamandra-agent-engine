@@ -217,7 +217,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             job_id = path.split("/")[-1]
-            job = job_manager.get_job_status(job_id)
+            job = task_bus.get_task_status(job_id)
             if not job:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "job_not_found"})
                 return
@@ -225,9 +225,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 "job_id": job_id,
                 "status": job.get("status", "queued"),
                 "trace_id": job.get("trace_id", ""),
-                "updated_at": job.get("updated_at", job.get("accepted_at", "")),
+                "updated_at": job.get("updated_at", ""),
                 "result_id": job.get("result_id"),
-                "reason_code": job.get("reason"),
+                "reason_code": None,
                 "message": None
             })
             return
