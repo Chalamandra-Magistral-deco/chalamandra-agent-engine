@@ -94,6 +94,26 @@ async def test_agent_tool_permissions_are_enforced(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_coordinator_cannot_execute_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    master = Master()
+    calls: list[str] = []
+
+    async def fake_execute_tool(tool: str, **kwargs):
+        calls.append(tool)
+        return {"tool": tool}
+
+    monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
+
+    with pytest.raises(PermissionError, match="no tiene permiso"):
+        await master.execute_agent_tool_call(
+            "coordinator",
+            {"name": "dynamics", "arguments": {}},
+        )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_structured_tool_call_executes_only_registered_authorized_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

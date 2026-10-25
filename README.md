@@ -60,14 +60,66 @@ Ollama es el único adaptador verificado por la suite local actual. Para habilit
 - `DEFAULT_TIMEOUT_SECONDS`, `DEFAULT_MAX_TOKENS`: valores iniciales de cada `ModelRequest`; los valores explícitos de una solicitud prevalecen.
 - `CHALAMANDRA_SEARCH_TERMS_DIR`: raíz permitida para CSV de minería. La herramienta es de solo lectura y solo propone candidatos; no modifica campañas.
 - `AZURE_KEYVAULT_URI`: necesaria si se llama al helper de Key Vault directamente.
+- `CHALAMANDRA_API_HOST`, `CHALAMANDRA_API_PORT`: la API solo permite loopback; por defecto `127.0.0.1:8766`.
+- `CHALAMANDRA_API_TOKEN`: token bearer para los POST y para todas las rutas cuando se configura.
+- `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Para activar planificación/ejecución de tareas exige además un token.
+
+## API operativa local
+
+Ejecuta desde la raíz del repositorio después de instalar dependencias:
+
+```bash
+python -m api.server
+```
+
+Rutas disponibles:
+- `GET /healthz`: estado básico del servidor y política de ejecución.
+- `GET /v1/inspect`: modelos, herramientas, perfiles y capacidades registradas; nunca devuelve valores secretos.
+- `GET /v1/agents`, `GET /v1/tools`: descubrimiento de perfiles/herramientas.
+- `POST /v1/tool-calls`: invoca una herramienta estructurada y valida el perfil autorizado mediante `Master.execute_agent_tool_call`.
+- `POST /v1/plan`: planificación con modelos; requiere `CHALAMANDRA_API_ENABLE_MODEL_CALLS=true` y token.
+- `POST /v1/tasks`: ejecución del flujo de tarea; requiere la misma activación explícita y token.
+
+Ejemplo de comprobación autenticada sin invocar modelos (lee el token sin imprimirlo):
+
+```bash
+python - <<'PY'
+import json
+from dotenv import dotenv_values
+from urllib.request import Request, urlopen
+
+token = dotenv_values("config/.env").get("CHALAMANDRA_API_TOKEN")
+if not token:
+    raise SystemExit("Falta CHALAMANDRA_API_TOKEN en config/.env")
+for path in ("/healthz", "/v1/inspect", "/v1/agents", "/v1/tools"):
+    req = Request(
+        "http://127.0.0.1:8766" + path,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urlopen(req, timeout=3) as response:
+        print(path, response.status, json.load(response))
+PY
+```
+
+Para instalar el servicio de usuario en esta VM:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/chalamandra-agents-api.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now chalamandra-agents-api.service
+systemctl --user status chalamandra-agents-api.service
+```
+
+Los POST siempre requieren `Authorization: Bearer $CHALAMANDRA_API_TOKEN`. La API limita el tamaño del cuerpo a 64 KiB, no acepta campos extra en los contratos y no expone shell ni CORS. Sin token, el modo local solo ofrece GET de lectura. Las llamadas a modelos están desactivadas por defecto; el acceso remoto mediante HTTP directo está bloqueado. Para integrar otro sistema, usa un túnel privado autenticado o proxy TLS tras una revisión de permisos.
 
 ## Verificación
 
 ```bash
 python -m pytest -q
-python -m ruff check adapters core dynamics pipeline registry security telemetry tests
-python -m mypy adapters core dynamics pipeline registry security telemetry
-python -m compileall -q core dynamics adapters pipeline registry security telemetry tests
+python -m ruff check api adapters core dynamics pipeline registry security telemetry tests
+python -m mypy api adapters core dynamics pipeline registry security telemetry
+python -m compileall -q api core dynamics adapters pipeline registry security telemetry tests
 python -m pip check
 python -m pip wheel . --no-deps -w /tmp/chalamandra-build
 ```
@@ -92,7 +144,7 @@ Las pruebas predeterminadas no llaman a proveedores de nube ni generan gasto por
 
 ## Límites operativos
 
-- `Master` se consume desde Python; este repositorio no define por ahora un servidor HTTP, CLI ni servicio de sistema.
+- `Master` se consume desde Python y tiene una API HTTP local de loopback; la unidad `systemd --user` está versionada en `deploy/systemd/`. La persistencia de ese servicio tras cerrar sesión depende de la configuración de linger del usuario en la VM.
 - Una habilidad solo se marca como verificada cuando existe evidencia local de prueba; las capacidades declaradas por un proveedor no elevan por sí solas el estado.
 - La herramienta `search_term_miner` nunca escribe en Google Ads. Solo lee el CSV contenido en el directorio permitido y devuelve recomendaciones candidatas.
 - Los límites de paso y los valores no finitos de la simulación se validan antes de calcular para reducir el riesgo de asignaciones excesivas o trayectorias inválidas.

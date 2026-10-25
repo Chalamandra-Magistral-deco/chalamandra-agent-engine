@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
@@ -25,7 +26,16 @@ class Tracer:
             "ts": datetime.now(timezone.utc).isoformat(),
             **response.model_dump(exclude={"raw"}),
         }
-        with self.path.open("a", encoding="utf-8") as f:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(self.path, flags, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError:
+            os.close(fd)
+            raise
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def iter_records(self, since: datetime | None = None) -> Iterator[dict]:
