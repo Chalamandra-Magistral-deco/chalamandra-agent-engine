@@ -108,9 +108,9 @@ class MasterAgentReviewProvider:
                 "Revisa críticamente el candidato analítico de CatedralX. "
                 "Busca errores de entrada, supuestos no justificados, límites del "
                 "método y contraevidencia. Distingue hechos comprobados de hipótesis. "
-                "No declares aceptado el resultado y no inventes fuentes ni pruebas.\\n"
-                f"Objetivo: {request.objective}\\n"
-                f"Activo: {request.asset}\\n"
+                "No declares aceptado el resultado y no inventes fuentes ni pruebas.\n"
+                f"Objetivo: {request.objective}\n"
+                f"Activo: {request.asset}\n"
                 "Candidato JSON: "
                 + json.dumps(analysis, ensure_ascii=False, sort_keys=True, default=str)
             )
