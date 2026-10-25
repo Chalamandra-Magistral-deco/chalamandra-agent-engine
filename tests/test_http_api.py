@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import jwt
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -14,11 +15,15 @@ from api.server import create_server
 from core.master import Master
 
 TEST_TOKEN = "test-api-token"
+TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
+
+def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchestration:read") -> str:
+    return jwt.encode({"scope": scopes}, TEST_JWT_SECRET, algorithm="HS256")
 
 
 @pytest.fixture
 def local_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[int, Any]]:
-    monkeypatch.setenv("CHALAMANDRA_API_TOKEN", TEST_TOKEN)
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
     master = Master()
 
@@ -49,7 +54,7 @@ def request(
     request_headers = (
         dict(headers)
         if headers is not None
-        else {"Authorization": f"Bearer {TEST_TOKEN}"}
+        else {"Authorization": f"Bearer {make_jwt()}"}
     )
     body = None
     if payload is not None:
@@ -164,7 +169,7 @@ def test_payload_size_and_content_type_are_limited(local_api):
         "/v1/tool-calls",
         method="POST",
         payload=b"x" * (64 * 1024 + 1),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TEST_TOKEN}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {make_jwt()}"},
     )
     assert status == 413
     assert result["error"] == "request_too_large"
@@ -174,30 +179,30 @@ def test_payload_size_and_content_type_are_limited(local_api):
         "/v1/tool-calls",
         method="POST",
         payload={"agent": "analyst", "tool_call": {}},
-        headers={"Content-Type": "text/plain", "Authorization": f"Bearer {TEST_TOKEN}"},
+        headers={"Content-Type": "text/plain", "Authorization": f"Bearer {make_jwt()}"},
     )
     assert status == 415
     assert result["error"] == "content_type_must_be_json"
 
 
 def test_token_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("CHALAMANDRA_API_TOKEN", TEST_TOKEN)
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
     server = create_server("127.0.0.1", 0, master=Master())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        status, result = request(server.server_address[1], "/healthz", headers={})
+        status, result = request(server.server_address[1], "/v1/inspect", headers={})
         assert status == 401
         assert result["error"] == "unauthorized"
 
         status, result = request(
             server.server_address[1],
-            "/healthz",
-            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            "/v1/inspect",
+            headers={"Authorization": f"Bearer {make_jwt()}"},
         )
         assert status == 200
-        assert result["status"] == "ok"
+        assert "models" in result
     finally:
         server.shutdown()
         server.server_close()
@@ -211,7 +216,7 @@ def test_non_loopback_requires_token(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ValueError, match="loopback"):
         create_server("0.0.0.0", 0)
 
-    monkeypatch.setenv("CHALAMANDRA_API_TOKEN", TEST_TOKEN)
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     with pytest.raises(ValueError, match="loopback"):
         create_server("0.0.0.0", 0)
 

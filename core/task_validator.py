@@ -43,8 +43,10 @@ class TaskValidator:
         rules = list(rules or [])
 
         if not rules:
+            # Fail-closed: sin reglas, no hay validación.
+            # No se puede declarar 'ok' o 'accepted' si no se evaluó.
             return ValidationResult(
-                status="SKIPPED",
+                status="NOT_EVALUATED",
                 passed=None,
             )
 

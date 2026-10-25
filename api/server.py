@@ -263,6 +263,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/v1/inspect":
+            if not self._authorized(require_token=True):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             self._send_json(HTTPStatus.OK, self.server.master.inspect())
             return
         if path == "/v1/agents":

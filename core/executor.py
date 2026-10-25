@@ -239,9 +239,14 @@ class Executor:
             validation_status = validation.status
             validation_errors = list(validation.errors)
 
-            if validation.is_fail:
+            # Fail-closed: solo un PASS explícito es válido.
+            # NOT_EVALUATED o FAIL implican que el resultado no está validado.
+            if not validation.is_pass:
                 status = "validation_failed"
-                errors.extend(f"validation:{error}" for error in validation.errors)
+                if validation.status == "NOT_EVALUATED":
+                    errors.append("validation:not_evaluated")
+                else:
+                    errors.extend(f"validation:{error}" for error in validation.errors)
 
         return SubtaskResult(
             subtask_id=subtask.id,

@@ -67,7 +67,7 @@ async def test_execute_plan_mocked():
 
     summary = await executor.execute_plan("Tarea test", subtasks)
 
-    assert summary.status == "completed"
+    assert summary.status == "partial_error"
     assert "0" in summary.subtask_results
     assert summary.subtask_results["0"].output == "Análisis completado"
     assert summary.subtask_results["0"].model_used == "ollama"
@@ -116,7 +116,7 @@ async def test_execute_plan_passes_dependency_context():
 
     summary = await executor.execute_plan("Tarea", subtasks)
 
-    assert summary.status == "completed"
+    assert summary.status == "partial_error"
     assert len(fake_master.orchestrator.run.await_args_list) == 2
     assert "resultado A" in fake_master.orchestrator.run.await_args_list[1].args[1].prompt
 
@@ -281,7 +281,7 @@ async def test_native_tool_call_is_validated_executed_and_returned_to_ollama(
 
     result = await executor.execute_subtask(subtask, {})
 
-    assert result.status == "ok"
+    assert result.status == "validation_failed"
     assert result.output == "Simulación completada con resultado verificado."
     assert executed == [("dynamics", tool_arguments)]
     first_request = master.orchestrator.run.await_args_list[0].args[1]
