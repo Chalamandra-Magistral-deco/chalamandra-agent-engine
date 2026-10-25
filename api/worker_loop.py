@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from api import task_bus
+from api import candidate_store
 from core.master import Master
 
 def _catedral_repo() -> Path:
@@ -79,7 +80,7 @@ def process_task(task: dict) -> dict:
                     "source": "catedralx",
                     "observed_at": datetime.now(timezone.utc).isoformat(),
                     "description": "DecisionResult generado por CatedralX",
-                    "digest": str(hash(json.dumps(result, sort_keys=True)))
+                    "digest": __import__("hashlib").sha256(json.dumps(result, sort_keys=True).encode()).hexdigest()
                 })
             else:
                 summary = f"CatedralX rechazó el análisis: {result.get('reason', 'unknown')}"
@@ -95,7 +96,7 @@ def process_task(task: dict) -> dict:
                 "source": "master_execution",
                 "observed_at": datetime.now(timezone.utc).isoformat(),
                 "description": f"Ejecución del Master para: {objective}",
-                "digest": str(hash(str(result)))
+                "digest": __import__("hashlib").sha256(str(result).encode()).hexdigest()
             })
             status = "candidate"
     except Exception as e:
@@ -112,6 +113,8 @@ def process_task(task: dict) -> dict:
         "contradictions": [],
         "trace_id": task.get("trace_id")
     }
+    # FASE 3: Guardar el candidato para que el Gate de Aceptación pueda verificar la evidencia
+    candidate_store.save_candidate(candidate_result)
     task_bus.mark_task_completed(task_id, candidate_result)
     return candidate_result
 
