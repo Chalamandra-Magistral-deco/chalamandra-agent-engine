@@ -45,7 +45,7 @@ def check_idempotency(key: str, payload: dict) -> dict | None:
             return rec
     return None
 
-def submit_job(payload: dict, idempotency_key: str) -> str:
+def submit_job(payload: dict, idempotency_key: str, trace_id: str | None = None) -> str:
     """Crea el job y lanza el hilo de ejecución."""
     # Validar idempotencia
     existing = check_idempotency(idempotency_key, payload)
@@ -53,7 +53,7 @@ def submit_job(payload: dict, idempotency_key: str) -> str:
         return existing["job_id"]
 
     job_id = str(uuid.uuid4())
-    trace_id = str(uuid.uuid4())
+    trace_id = trace_id or str(uuid.uuid4())
     
     job_record = {
         "job_id": job_id,

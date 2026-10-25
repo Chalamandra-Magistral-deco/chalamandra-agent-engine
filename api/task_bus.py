@@ -39,7 +39,7 @@ def enqueue_task(contract: dict[str, Any]) -> str:
         "required_tools": contract.get("required_tools", []),
         "success_criteria": contract.get("success_criteria", []),
         "status": "queued",
-        "trace_id": contract.get("trace_id"),
+        "trace_id": contract.get("trace_id"), # Propagado desde HTTP
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     _append(_tasks_file(), record)

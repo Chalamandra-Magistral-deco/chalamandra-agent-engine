@@ -130,6 +130,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(supplied[len(prefix):], token)
 
+    def _get_trace_id(self) -> str:
+        return self.headers.get("X-Trace-Id", str(uuid.uuid4()))
+
     def _read_json_body(self) -> dict[str, Any] | None:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
@@ -329,7 +332,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
             
-            job_id = job_manager.submit_job(body, idem_key)
+            job_id = job_manager.submit_job(body, idem_key, trace_id=self._get_trace_id())
             job = job_manager.get_job_status(job_id)
             
             self._send_json(HTTPStatus.ACCEPTED, {
