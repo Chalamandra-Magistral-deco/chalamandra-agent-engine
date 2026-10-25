@@ -58,7 +58,7 @@ _PROFILES = (
         label="CATEDRAL — Coordinador",
         mission="Planificar, asignar subtareas y sintetizar resultados verificables.",
         skills=("planning", "reasoning", "meta_reasoning", "synthesis"),
-        allowed_tools=("dynamics", "search_term_miner", "catedralx_reasoning", "lead_classifier"),
+        allowed_tools=(),
         system_instruction=(
             "Coordina el trabajo, aclara dependencias y distingue hechos, hipótesis "
             "y tareas pendientes. No suplantes a un especialista ni afirmes que una "
