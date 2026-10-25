@@ -6,8 +6,8 @@ from typing import Any
 
 from governance.contracts import (
     AgentReview,
-    EvidenceProducer,
     EvidenceKind,
+    EvidenceProducer,
     ValidationCheck,
     ValidationRecord,
     ValidationStatus,
@@ -28,7 +28,11 @@ def verify_candidate(
     confianza y contener fuente y hash de contenido.
     """
     engine_ok = analysis.get("status") == "ok"
-    decision_present = bool(str(analysis.get("decision", "")).strip())
+    raw_decision = analysis.get("decision")
+    decision_present = (
+        raw_decision is not None
+        and str(raw_decision).strip().lower() not in {"", "none", "null", "undefined"}
+    )
     signal_consistent = analysis.get("signal_consistent") is True
     actions_disabled = (
         analysis.get("trading_eligible") is False
@@ -94,8 +98,7 @@ def verify_candidate(
     # Violaciones de seguridad se bloquean inmediatamente.
     if not actions_disabled:
         status = ValidationStatus.BLOCKED
-    # Un motor fallido o una inconsistencia explícita requiere corregir la entrada
-    # o el análisis, no simplemente repetir la aprobación.
+    # Un motor fallido requiere corregir la entrada o el análisis.
     elif analysis.get("status") == "error":
         status = ValidationStatus.BLOCKED
     elif not signal_consistent and analysis.get("status") == "ok":
