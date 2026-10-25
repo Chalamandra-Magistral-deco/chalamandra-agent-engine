@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 from api import job_manager
+from api import acceptance_store
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
@@ -166,6 +167,23 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not result:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
                 return
+            
+            # FASE 2: Gate de Aceptación Independiente
+            acceptance = acceptance_store.get_acceptance(result_id)
+            if not acceptance:
+                self._send_json(HTTPStatus.ACCEPTED, {
+                    "status": "pending_verification",
+                    "message": "Result exists but awaits independent acceptance"
+                })
+                return
+            if acceptance.get("outcome") != "accepted":
+                self._send_json(HTTPStatus.FORBIDDEN, {
+                    "error": "result_not_accepted",
+                    "outcome": acceptance.get("outcome"),
+                    "reasons": acceptance.get("reasons", [])
+                })
+                return
+                
             self._send_json(HTTPStatus.OK, result)
             return
 
@@ -222,6 +240,22 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         path = urlsplit(self.path).path
+        if path == "/v1/acceptance":
+            # Endpoint interno para el verificador independiente
+            body = self._read_json_body()
+            if not body or "candidate_id" not in body or "outcome" not in body:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+                return
+            try:
+                decision_id = acceptance_store.record_acceptance(body)
+                self._send_json(HTTPStatus.CREATED, {
+                    "decision_id": decision_id,
+                    "outcome": body.get("outcome")
+                })
+            except ValueError as e:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
+            return
+
         if path == "/v1/jobs":
             idem_key = self.headers.get("Idempotency-Key")
             if not idem_key or len(idem_key) < 8:
