@@ -40,10 +40,26 @@ def _read_all(path: Path) -> list[dict]:
 
 def check_idempotency(key: str, payload: dict) -> dict | None:
     """Si la key existe y el payload es igual, retorna el job_id previo."""
-    for rec in _read_all(_idempotency_file()):
-        if rec.get("key") == key and rec.get("payload") == payload:
-            return rec
-    return None
+    import fcntl
+    target = _idempotency_file()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            records = []
+            for line in f:
+                if line.strip():
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            for rec in records:
+                if rec.get("key") == key and rec.get("payload") == payload:
+                    return rec
+            return None
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 def submit_job(payload: dict, idempotency_key: str, trace_id: str | None = None) -> str:
     """Crea el job y lanza el hilo de ejecución."""
@@ -76,16 +92,22 @@ def _run_job(job_id: str):
     catedral_repo = Path("/home/azureuser/workspace/repos/CatedralX")
     
     try:
-        # Extraer el payload del job
+        # Extraer el payload del job (soporta formato anidado del OpenAPI y formato plano)
         job_records = [r for r in _read_all(_jobs_file()) if r.get("job_id") == job_id]
-        payload = job_records[0].get("payload", {}) if job_records else {}
+        job_data = job_records[0].get("payload", {}) if job_records else {}
         
+        # Si viene del contrato OpenAPI, el payload real está anidado
+        if "payload" in job_data and isinstance(job_data["payload"], dict):
+            real_payload = job_data["payload"]
+        else:
+            real_payload = job_data
+            
         # Crear snapshot temporal con los datos de la petición
         import tempfile
         snapshot = {
             "PERCEIVE": {
-                "historial_precios": payload.get("historical_prices", []),
-                "precio": payload.get("current_price", 0.0),
+                "historial_precios": real_payload.get("historical_prices", []),
+                "precio": real_payload.get("current_price", 0.0),
                 "observed_at": datetime.now(timezone.utc).isoformat(),
                 "source": "api_request"
             }

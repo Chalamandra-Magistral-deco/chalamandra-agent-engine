@@ -18,7 +18,9 @@ TEST_TOKEN = "test-api-token"
 TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
 
 def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchestration:read") -> str:
-    return jwt.encode({"scope": scopes}, TEST_JWT_SECRET, algorithm="HS256")
+    import time
+    payload = {"scope": scopes, "exp": int(time.time()) + 3600}
+    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 
 @pytest.fixture

@@ -64,6 +64,15 @@ def record_acceptance(decision: dict[str, Any]) -> str:
     if not hmac.compare_digest(provided_sig, expected_sig):
         raise ValueError("Firma criptográfica inválida. Verificador no autorizado o decisión alterada.")
     
+    # Validación de evidencia: el evidence_digest debe coincidir con el candidato almacenado
+    from api import candidate_store
+    candidate = candidate_store.get_candidate(decision.get("candidate_id"))
+    if not candidate:
+        raise ValueError("Candidato no encontrado para verificar la evidencia.")
+    expected_evidence_digest = candidate_store.compute_evidence_digest(candidate)
+    if decision.get("evidence_digest") != expected_evidence_digest:
+        raise ValueError("El evidence_digest no coincide con la evidencia del candidato.")
+    
     record = {
         "decision_id": decision_id,
         "candidate_id": decision.get("candidate_id"),

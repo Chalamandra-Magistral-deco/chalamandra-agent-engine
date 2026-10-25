@@ -119,7 +119,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _authorized(self, *, require_token: bool = False, required_scope: str | None = None) -> bool:
+    def _authorized(self, *, require_token: bool = True, required_scope: str | None = None) -> bool:
         if not require_token:
             return True
         import jwt
@@ -129,7 +129,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if not secret or not token:
             return False
         try:
-            payload = jwt.decode(token, secret, algorithms=["HS256"])
+            payload = jwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
             if required_scope:
                 scopes = payload.get("scope", "").split()
                 if required_scope not in scopes:
@@ -181,12 +181,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         return body
 
     def do_GET(self) -> None:
-        if not self._authorized():
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-            return
-
         path = urlsplit(self.path).path
         if path.startswith("/v1/results/"):
+            if not self._authorized(require_token=True, required_scope="results:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             result_id = path.split("/")[-1]
             result = job_manager.get_result(result_id)
             if not result:
@@ -213,6 +212,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/v1/jobs/"):
+            if not self._authorized(require_token=True, required_scope="jobs:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             job_id = path.split("/")[-1]
             job = job_manager.get_job_status(job_id)
             if not job:
@@ -230,6 +232,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/subscriptions":
+            if not self._authorized(require_token=True, required_scope="subscriptions:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if not self._authorized(require_token=True, required_scope="subscriptions:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             subs = subscription_store.list_subscriptions()
             self._send_json(HTTPStatus.OK, {"items": subs})
             return
@@ -263,16 +271,25 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/v1/inspect":
+            if not self._authorized(require_token=True, required_scope="results:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             if not self._authorized(require_token=True):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             self._send_json(HTTPStatus.OK, self.server.master.inspect())
             return
         if path == "/v1/agents":
+            if not self._authorized(require_token=True, required_scope="results:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             data = self.server.master.inspect()
             self._send_json(HTTPStatus.OK, {"agents": data.get("agents", [])})
             return
         if path == "/v1/tools":
+            if not self._authorized(require_token=True, required_scope="results:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             tools = []
             for name in self.server.master.tools.available():
                 spec = self.server.master.tools.get(name)
@@ -303,12 +320,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self) -> None:
-        if not self._authorized(require_token=True):
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-            return
-
         path = urlsplit(self.path).path
         if path == "/v1/acceptance":
+            if not self._authorized(require_token=True, required_scope="acceptance:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             # Endpoint interno para el verificador independiente
             body = self._read_json_body()
             if not body or "candidate_id" not in body or "outcome" not in body:
@@ -337,6 +353,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/internal/v1/orchestration/runs":
+            if not self._authorized(require_token=True, required_scope="orchestration:run"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             body = self._read_json_body()
             if not body or "objective" not in body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_trigger"})
@@ -376,6 +395,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/jobs":
+            if not self._authorized(require_token=True, required_scope="jobs:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             idem_key = self.headers.get("Idempotency-Key")
             if not idem_key or len(idem_key) < 8:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
@@ -411,6 +433,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/tool-calls":
+            if not self._authorized(require_token=True, required_scope="jobs:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             if set(body) != {"agent", "tool_call"}:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "expected_agent_and_tool_call"})
                 return

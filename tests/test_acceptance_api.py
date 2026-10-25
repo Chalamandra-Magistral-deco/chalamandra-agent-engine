@@ -11,7 +11,9 @@ from api import acceptance_store
 TEST_JWT_SECRET = "test-verifier-secret"
 
 def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write"):
-    return jwt.encode({"scope": scopes}, TEST_JWT_SECRET, algorithm="HS256")
+    import time
+    payload = {"scope": scopes, "exp": int(time.time()) + 3600}
+    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 @pytest.fixture
 def api_server(monkeypatch):
@@ -71,7 +73,12 @@ def test_get_result_blocked_with_rejection(mock_acc, mock_res, api_server):
     assert status == 403
     assert body["error"] == "result_not_accepted"
 
-def test_post_acceptance_persists_record(api_server, tmp_path):
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
+def test_post_acceptance_persists_record(mock_digest, mock_get_candidate, api_server, tmp_path):
+    mock_get_candidate.return_value = {"candidate_id": "test-123", "evidence": []}
+    mock_digest.return_value = "h"
+    
     with patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acc.jsonl"):
         payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted",
                    "verifier_id": "tester", "evidence_digest": "h", "trace_id": "t"}
