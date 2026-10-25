@@ -4,7 +4,7 @@ from core.task_validator import TaskValidator
 def test_no_rules_is_skipped():
     result = TaskValidator().validate("OK")
 
-    assert result.status == "SKIPPED"
+    assert result.status == "NOT_EVALUATED"
     assert result.passed is None
     assert not result.errors
 
