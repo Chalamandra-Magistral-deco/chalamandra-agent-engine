@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from api import job_manager
 from api import acceptance_store
 from api import subscription_store
@@ -407,14 +408,18 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
             
-            job_id = job_manager.submit_job(body, idem_key, trace_id=self._get_trace_id())
-            job = job_manager.get_job_status(job_id)
-            
+            # Encolar en el TaskBus unificado
+            trace_id = self._get_trace_id()
+            task_id = task_bus.enqueue_task({
+                "objective": body.get("type", "financial_analysis"),
+                "payload": body.get("payload", body),
+                "trace_id": trace_id
+            })
             self._send_json(HTTPStatus.ACCEPTED, {
-                "job_id": job_id,
+                "job_id": task_id,
                 "status": "queued",
-                "trace_id": job.get("trace_id", ""),
-                "accepted_at": job.get("accepted_at", "")
+                "trace_id": trace_id,
+                "accepted_at": datetime.now(timezone.utc).isoformat()
             })
             return
 
