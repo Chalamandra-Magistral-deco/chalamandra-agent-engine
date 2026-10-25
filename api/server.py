@@ -14,6 +14,8 @@ import os
 import uuid
 from api import job_manager
 from api import acceptance_store
+from api import subscription_store
+from api import webhook_dispatcher
 from api import task_bus
 import threading
 from collections.abc import Mapping
@@ -206,6 +208,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == "/v1/subscriptions":
+            subs = subscription_store.list_subscriptions()
+            self._send_json(HTTPStatus.OK, {"items": subs})
+            return
+
         if path == "/healthz":
             self._send_json(
                 HTTPStatus.OK,
@@ -236,6 +243,23 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
+    def do_DELETE(self) -> None:
+        path = urllib.parse.urlparse(self.path).path
+        if not self._authorized(require_token=True):
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+            return
+
+        if path.startswith("/v1/subscriptions/"):
+            sub_id = path.split("/")[-1]
+            if subscription_store.disable_subscription(sub_id):
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.end_headers()
+            else:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "subscription_not_found"})
+            return
+            
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
     def do_POST(self) -> None:
         if not self._authorized(require_token=True):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -250,6 +274,15 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 decision_id = acceptance_store.record_acceptance(body)
+                
+                # FASE 4: Si es aceptado, disparar webhooks de distribución
+                if body.get("outcome") == "accepted":
+                    webhook_dispatcher.dispatch_event(
+                        event_type="result.accepted",
+                        result_id=body.get("candidate_id"),
+                        trace_id=body.get("trace_id", "unknown")
+                    )
+                    
                 self._send_json(HTTPStatus.CREATED, {
                     "decision_id": decision_id,
                     "outcome": body.get("outcome")
