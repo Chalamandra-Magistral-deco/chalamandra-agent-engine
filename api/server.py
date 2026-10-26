@@ -249,7 +249,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/internal/v1/orchestration/runs/"):
             run_id = path.split("/")[-1]
             # Buscamos en el bus (simulamos leyendo todas las tareas asociadas a ese run)
-            tasks = task_bus.list_tasks(limit=100)
+            tasks = task_bus._read_all(task_bus._tasks_file())  # type: ignore[attr-defined]
             run_tasks = [t for t in tasks if t.get("run_id") == run_id]
             if not run_tasks:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
