@@ -1,7 +1,13 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     CATEDRALX_PATH=/app/CatedralX \
-    CATEDRALX_STATE_PATH=/home/chalamandra/.local/state/chalamandra/catedralx/hormonas.json
+    CATEDRALX_STATE_PATH=/home/chalamandra/.local/state/chalamandra/catedralx/hormonas.json \
+    API_BIND_HOST=0.0.0.0 \
+    CHALAMANDRA_API_HOST=0.0.0.0 \
+    ALLOW_CONTAINER_BIND=true \
+    API_PORT=8766 \
+    CHALAMANDRA_API_PORT=8766 \
+    CHALAMANDRA_STATE_DIR=/home/chalamandra/.local/state/chalamandra
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
