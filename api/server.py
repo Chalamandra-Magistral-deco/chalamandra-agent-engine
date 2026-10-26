@@ -509,7 +509,7 @@ def create_server(
     master: Master | None = None,
 ) -> EngineHTTPServer:
     """Create the server after validating its network and execution policy."""
-    bind_host = host or os.getenv("CHALAMANDRA_API_HOST") or "127.0.0.1"
+    bind_host = host or os.getenv("CHALAMANDRA_API_HOST") or os.getenv("API_BIND_HOST") or "127.0.0.1"
     raw_port: str | int = port if port is not None else os.getenv("CHALAMANDRA_API_PORT", "8766")
     try:
         bind_port = int(raw_port)
