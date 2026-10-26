@@ -12,7 +12,8 @@ jobs:
         with: { python-version: '3.12', cache: 'pip' }
       - run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio PyJWT httpx ruff mypy
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio PyJWT httpx ruff mypy openai google-generativeai ollama
       - env:
           CHALAMANDRA_JWT_SECRET: test-secret-min-32-bytes-long-for-ci-xxxx
           CHALAMANDRA_API_TOKEN: test-api-token-for-ci-32-bytes-long-xxxx
