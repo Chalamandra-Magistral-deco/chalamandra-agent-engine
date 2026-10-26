@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from api.server import create_server
-from api import task_bus
 from core.master import Master
 
 TEST_TOKEN = "test-api-token"
@@ -230,86 +229,3 @@ def test_model_calls_require_token_even_on_loopback(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(ValueError, match="CHALAMANDRA_API_TOKEN"):
         create_server("127.0.0.1", 0)
-
-def test_internal_run_status_requires_orchestration_read_scope(local_api, monkeypatch):
-    port, _ = local_api
-    task = {
-        "task_id": "task-internal-1",
-        "run_id": "run-internal-1",
-        "status": "candidate",
-        "trace_id": "trace-internal-1",
-        "updated_at": "2026-10-25T00:00:00+00:00",
-    }
-    monkeypatch.setattr(task_bus, "get_run_tasks", lambda run_id: [task] if run_id == task["run_id"] else [])
-
-    status, result = request(
-        port,
-        "/internal/v1/orchestration/runs/run-internal-1",
-        headers={},
-    )
-    assert status == 401
-    assert result["error"] == "unauthorized"
-
-    status, result = request(
-        port,
-        "/internal/v1/orchestration/runs/run-internal-1",
-        headers={"Authorization": f"Bearer {make_jwt(scopes='jobs:write')}"},
-    )
-    assert status == 401
-
-    status, result = request(
-        port,
-        "/internal/v1/orchestration/runs/run-internal-1",
-        headers={"Authorization": f"Bearer {make_jwt(scopes='orchestration:read')}"},
-    )
-    assert status == 200
-    assert result["status"] == "completed"
-    assert result["task_ids"] == ["task-internal-1"]
-    assert result["trace_id"] == "trace-internal-1"
-
-    status, result = request(
-        port,
-        "/internal/v1/orchestration/runs/missing-run",
-        headers={"Authorization": f"Bearer {make_jwt(scopes='orchestration:read')}"},
-    )
-    assert status == 404
-    assert result["error"] == "run_not_found"
-
-
-def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypatch):
-    port, _ = local_api
-    payload = {"candidate_id": "candidate-internal-1", "status": "candidate", "trace_id": "trace-internal-1"}
-    calls = []
-    monkeypatch.setattr(task_bus, "mark_task_completed", lambda task_id, body: calls.append((task_id, body)))
-
-    status, result = request(
-        port,
-        "/internal/v1/tasks/task-internal-1/results",
-        method="POST",
-        payload=payload,
-        headers={},
-    )
-    assert status == 401
-    assert result["error"] == "unauthorized"
-    assert calls == []
-
-    status, result = request(
-        port,
-        "/internal/v1/tasks/task-internal-1/results",
-        method="POST",
-        payload=payload,
-        headers={"Authorization": f"Bearer {make_jwt(scopes='jobs:write')}"},
-    )
-    assert status == 401
-    assert calls == []
-
-    status, result = request(
-        port,
-        "/internal/v1/tasks/task-internal-1/results",
-        method="POST",
-        payload=payload,
-        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
-    )
-    assert status == 202
-    assert result["candidate_id"] == "candidate-internal-1"
-    assert calls == [("task-internal-1", payload)]

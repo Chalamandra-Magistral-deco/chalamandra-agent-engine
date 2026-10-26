@@ -8,7 +8,7 @@ import jwt
 from api.server import create_server
 from api import acceptance_store
 
-TEST_JWT_SECRET = "test-verifier-secret-minimum-32-bytes"
+TEST_JWT_SECRET = "test-verifier-secret"
 
 def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write"):
     import time
