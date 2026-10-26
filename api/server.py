@@ -7,13 +7,11 @@ No se habilita CORS ni se expone una consola de shell.
 from __future__ import annotations
 
 import asyncio
-import hmac
 import ipaddress
 import json
 import os
 import uuid
 from datetime import datetime, timezone
-from api import job_manager
 from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
@@ -306,7 +304,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self) -> None:
-        path = urllib.parse.urlsplit(self.path).path
+        path = urlsplit(self.path).path
         if not self._authorized(require_token=True):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
