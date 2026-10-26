@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch, MagicMock
 from api import webhook_dispatcher, subscription_store
 

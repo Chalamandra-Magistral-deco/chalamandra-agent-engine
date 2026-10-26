@@ -7,7 +7,6 @@ No se habilita CORS ni se expone una consola de shell.
 from __future__ import annotations
 
 import asyncio
-import hmac
 import ipaddress
 import json
 import os
@@ -35,6 +34,9 @@ MAX_TASK_CHARS = 8_000
 
 
 def _is_loopback_host(host: str) -> bool:
+    # Permite 0.0.0.0 en contenedor si se pide explícitamente
+    if host == "0.0.0.0" and os.getenv("ALLOW_CONTAINER_BIND") == "true":
+        return True
     """Only treat explicit loopback addresses/names as safe for no-token mode."""
     if host.casefold() == "localhost":
         return True
@@ -247,7 +249,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/internal/v1/orchestration/runs/"):
             run_id = path.split("/")[-1]
             # Buscamos en el bus (simulamos leyendo todas las tareas asociadas a ese run)
-            tasks = task_bus._read_all(task_bus._tasks_file())
+            tasks = task_bus.list_tasks(limit=100)
             run_tasks = [t for t in tasks if t.get("run_id") == run_id]
             if not run_tasks:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
@@ -305,7 +307,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self) -> None:
-        path = urllib.parse.urlsplit(self.path).path
+        path = urlsplit(self.path).path
         if not self._authorized(require_token=True):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
@@ -342,7 +344,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 if body.get("outcome") == "accepted":
                     webhook_dispatcher.dispatch_event(
                         event_type="result.accepted",
-                        result_id=body.get("candidate_id"),
+                        result_id=str(body.get("candidate_id") or ""),
                         trace_id=body.get("trace_id", "unknown")
                     )
                     

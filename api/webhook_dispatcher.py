@@ -8,7 +8,6 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 from api import subscription_store
 
 def _state_dir() -> Path:
