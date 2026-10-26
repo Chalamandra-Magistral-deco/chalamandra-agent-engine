@@ -66,7 +66,10 @@ def record_acceptance(decision: dict[str, Any]) -> str:
     
     # Validación de evidencia: el evidence_digest debe coincidir con el candidato almacenado
     from api import candidate_store
-    candidate = candidate_store.get_candidate(decision.get("candidate_id"))
+    cid = decision.get("candidate_id")
+    if not cid:
+        raise ValueError("candidate_id faltante")
+    candidate = candidate_store.get_candidate(str(cid))
     if not candidate:
         raise ValueError("Candidato no encontrado para verificar la evidencia.")
     expected_evidence_digest = candidate_store.compute_evidence_digest(candidate)
