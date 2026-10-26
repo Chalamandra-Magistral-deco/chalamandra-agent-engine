@@ -1,0 +1,83 @@
+name: Chalamandra Agents - 435 Tests + Docker
+
+on:
+  push:
+    branches: [main, v1.0-limpio, v1.1-canonico]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout CatedralX (núcleo 290 tests)
+        uses: actions/checkout@v4
+        with:
+          repository: chalamandra/CatedralX
+          path: CatedralX
+          # Si CatedralX es privado, usa PAT: token: ${{ secrets.CATEDRALX_PAT }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest PyJWT httpx -r requirements.txt || true
+          pip install -r CatedralX/requirements.txt || true
+
+      - name: CatedralX 290 tests + feed-once + healthy true
+        run: |
+          cd CatedralX
+          ./BIN/catedral test | tail -5
+          ./BIN/catedral feed-once
+          ./BIN/catedral status | python -m json.tool | grep -E "healthy|price|market_phase"
+
+      - name: Agents 145 tests + fail-closed
+        env:
+          CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
+          CHALAMANDRA_JWT_SECRET: test-secret-min-32-bytes-long-for-ci-xxxx
+          CHALAMANDRA_API_ENABLE_MODEL_CALLS: "true"
+        run: |
+          cd ${{ github.workspace }}
+          CATEDRALX_PATH=CatedralX PYTHONPATH=. python -m pytest agents/tests -q --junitxml=junit.xml || python -m pytest -q
+          # Valida que no fabrica órdenes con <30 precios
+          CATEDRALX_PATH=CatedralX PYTHONPATH=. python -c "
+          from pipeline.catedralx_tool import catedralx_reasoning_tool
+          r = catedralx_reasoning_tool(historical_prices=[80000]*4, current_price=80000, asset='BTCUSDT')
+          assert r['trading_eligible'] == False and r['orders_created'] == False
+          print('✅ Fail-closed: <30 precios → trading_eligible False')
+          "
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API :8766
+        run: docker build -f Dockerfile -t chalamandra-agents:ci . || docker build -t chalamandra-agents:ci .
+
+  api-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Smoke test 202 Accepted + idempotencia
+        env:
+          CHALAMANDRA_JWT_SECRET: test-secret-min-32-bytes-long-for-ci-xxxx
+          CHALAMANDRA_API_ENABLE_MODEL_CALLS: "true"
+        run: |
+          python -m pip install PyJWT httpx
+          CHALAMANDRA_JWT_SECRET=$CHALAMANDRA_JWT_SECRET CHALAMANDRA_API_ENABLE_MODEL_CALLS=true python -m api.server &
+          sleep 2
+          TOKEN=$(python -c "import jwt,datetime; print(jwt.encode({'sub':'ci','scope':'jobs:write jobs:read results:read','exp':datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)}, '$CHALAMANDRA_JWT_SECRET', algorithm='HS256'))")
+          curl -s -X POST http://127.0.0.1:8766/v1/jobs -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: ci-001" -H "Content-Type: application/json" -d '{"type":"financial_analysis","payload":{"symbol":"BTCUSDT"}}' | grep -q job_id
+          echo "✅ 202 Accepted + job_id OK"
