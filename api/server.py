@@ -411,11 +411,15 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             
             # Encolar en el TaskBus unificado
             trace_id = self._get_trace_id()
-            task_id = task_bus.enqueue_task({
-                "objective": body.get("type", "financial_analysis"),
-                "payload": body.get("payload", body),
-                "trace_id": trace_id
-            })
+            idem_key = self.headers.get("Idempotency-Key")
+            task_id = task_bus.enqueue_task(
+                {
+                    "objective": body.get("type", "financial_analysis"),
+                    "payload": body.get("payload", body),
+                    "trace_id": trace_id
+                },
+                idempotency_key=idem_key
+            )
             self._send_json(HTTPStatus.ACCEPTED, {
                 "job_id": task_id,
                 "status": "queued",

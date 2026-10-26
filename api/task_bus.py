@@ -36,6 +36,14 @@ def init_db():
                 updated_at TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS idempotency (
+                idempotency_key TEXT PRIMARY KEY,
+                payload_hash TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
         # 2. Migración de columna payload (después de crear tabla)
         cursor = conn.execute("PRAGMA table_info(tasks)")
         columns = [row[1] for row in cursor.fetchall()]
@@ -44,10 +52,34 @@ def init_db():
         if "result_id" not in columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN result_id TEXT")
 
-def enqueue_task(contract: dict) -> str:
+def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
     init_db()
     task_id = contract.get("task_id") or str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    
+    # P0-2: Idempotencia atómica
+    if idempotency_key:
+        import hashlib
+        payload_hash = hashlib.sha256(json.dumps(contract.get("payload", {}), sort_keys=True).encode()).hexdigest()
+        with _get_conn() as conn:
+            # Intentar insertar en idempotency; si ya existe, devolver el task_id existente
+            try:
+                conn.execute(
+                    "INSERT INTO idempotency (idempotency_key, payload_hash, task_id, created_at) VALUES (?, ?, ?, ?)",
+                    (idempotency_key, payload_hash, task_id, now)
+                )
+            except sqlite3.IntegrityError:
+                # La clave ya existe. Verificar que el payload sea el mismo.
+                row = conn.execute(
+                    "SELECT task_id, payload_hash FROM idempotency WHERE idempotency_key = ?",
+                    (idempotency_key,)
+                ).fetchone()
+                if row:
+                    if row["payload_hash"] != payload_hash:
+                        raise ValueError("Idempotency-Key reutilizada con payload distinto")
+                    return row["task_id"]
+                raise
+    
     with _get_conn() as conn:
         conn.execute(
             "INSERT INTO tasks (task_id, run_id, objective, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
