@@ -19,5 +19,5 @@ COPY telemetry/ ./telemetry/
 COPY dynamics/ ./dynamics/
 RUN chown -R chalamandra:chalamandra /app
 USER chalamandra
-HEALTHCHECK --interval=30s CMD python -m pytest tests/ -q | tail -1 || exit 1
+HEALTHCHECK --interval=30s CMD curl -f http://localhost:8766/healthz || exit 1
 CMD ["python","-m","api.server"]
