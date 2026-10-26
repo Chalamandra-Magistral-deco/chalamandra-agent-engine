@@ -247,18 +247,24 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/internal/v1/orchestration/runs/"):
+            if not self._authorized(require_token=True, required_scope="orchestration:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             run_id = path.split("/")[-1]
-            # Buscamos en el bus (simulamos leyendo todas las tareas asociadas a ese run)
-            tasks = task_bus._read_all(task_bus._tasks_file())  # type: ignore[attr-defined]
-            run_tasks = [t for t in tasks if t.get("run_id") == run_id]
+            run_tasks = task_bus.get_run_tasks(run_id)
             if not run_tasks:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
                 return
-            status = "completed" if all(t["status"] == "completed" for t in run_tasks) else "executing"
+            terminal_statuses = {"completed", "candidate", "accepted", "rejected", "blocked", "failed"}
+            status = (
+                "completed"
+                if all(task.get("status") in terminal_statuses for task in run_tasks)
+                else "executing"
+            )
             self._send_json(HTTPStatus.OK, {
                 "run_id": run_id,
                 "status": status,
-                "task_ids": [t["task_id"] for t in run_tasks],
+                "task_ids": [task["task_id"] for task in run_tasks],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "trace_id": run_tasks[0].get("trace_id", "")
             })
@@ -388,14 +394,20 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/internal/v1/tasks/") and path.endswith("/results"):
+            if not self._authorized(require_token=True, required_scope="tasks:complete"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             task_id = path.split("/")[-2]
             body = self._read_json_body()
             if not body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
-            # En un caso real, aquí validaríamos la identidad del worker (serviceBearerAuth)
             task_bus.mark_task_completed(task_id, body)
-            self._send_json(HTTPStatus.ACCEPTED, {"candidate_id": body.get("candidate_id"), "verification_status": "pending", "trace_id": body.get("trace_id")})
+            self._send_json(HTTPStatus.ACCEPTED, {
+                "candidate_id": body.get("candidate_id"),
+                "verification_status": "pending",
+                "trace_id": body.get("trace_id")
+            })
             return
 
         if path == "/v1/jobs":
