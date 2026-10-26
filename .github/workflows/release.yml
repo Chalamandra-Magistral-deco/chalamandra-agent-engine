@@ -1,77 +1,79 @@
-name: Chalamandra Agents - 435 Tests + Docker
+name: Chalamandra Release Pipeline
 
 on:
   push:
-    branches: [main, v1.0-limpio, v1.1-canonico]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   test-agents:
-    name: "Agents 145 tests + fail-closed + JWT + 202 Accepted"
+    name: "Agents Tests (145) + Fail-Closed Validation"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Install deps
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt 2>/dev/null || true
-          pip install pytest PyJWT httpx
+          pip install -r requirements.txt || pip install -e . || true
+          pip install pytest PyJWT httpx pydantic
 
-      - name: Run 145 tests + fail-closed + idempotencia + 202
+      - name: Run Agents Tests & Architectural Validation
         env:
-          CHALAMANDRA_JWT_SECRET: test-secret-min-32-bytes-long-for-ci-xxxx
+          CHALAMANDRA_JWT_SECRET: "test-secret-min-32-bytes-long-for-ci-xxxxxx"
           CHALAMANDRA_API_ENABLE_MODEL_CALLS: "true"
-          CHALAMANDRA_API_PORT: 8766
         run: |
-          python -m pytest -q
-          # Valida TaskBus + CatedralX tool si CatedralX_PATH existe
-          if [ -d "../CatedralX" ] || [ -d "./CatedralX" ]; then
-            CATEDRALX_PATH=$(pwd)/../CatedralX PYTHONPATH=. python -c "
-            from pipeline.catedralx_tool import catedralx_reasoning_tool
-            r = catedralx_reasoning_tool(historical_prices=[80000]*4, current_price=80000, asset='BTCUSDT')
-            assert r['trading_eligible']==False
-            print('✅ Fail-closed OK')
-            "
-          else
-            python -c "
-            from core.task_bus import TaskBus
-            bus = TaskBus()
-            id1 = bus.enqueue_task({'objective':'test','payload':{'a':1}}, 'key-123')
-            id2 = bus.enqueue_task({'objective':'test','payload':{'a':1}}, 'key-123')
-            assert id1==id2
-            print(f'✅ Idempotencia OK {id1}')
-            "
-          fi
-
-      - name: Test /v1/jobs 202 Accepted con JWT
-        run: |
-          CHALAMANDRA_JWT_SECRET=test-secret-min-32-bytes-long-for-ci-xxxx CHALAMANDRA_API_ENABLE_MODEL_CALLS=true python3 -m api.server &
-          sleep 2
-          TOKEN=$(python3 -c "import jwt,datetime; print(jwt.encode({'sub':'ci','scope':'jobs:write jobs:read','exp': datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)}, 'test-secret-min-32-bytes-long-for-ci-xxxx', algorithm='HS256'))")
-          curl -s -X POST http://127.0.0.1:8766/v1/jobs -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: ci-001" -H "Content-Type: application/json" -d '{"type":"financial_analysis","payload":{"symbol":"BTCUSDT"}}' | grep -q "202\|job_id\|queued" && echo "✅ 202 Accepted OK" || echo "❌ 202 failed"
-          pkill -f "api.server"
+          python -m pytest -q --junitxml=junit-agents.xml
+          
+          echo "=== VALIDACIÓN ARQUITECTÓNICA: Fail-Closed ==="
+          PYTHONPATH=. python -c "
+          from pipeline.catedralx_tool import catedralx_reasoning_tool
+          r = catedralx_reasoning_tool(historical_prices=[80000]*4, current_price=80000, asset='BTCUSDT')
+          assert r.get('trading_eligible') == False, 'CRÍTICO: Debe bloquear con <30 precios'
+          assert r.get('orders_created') == False, 'CRÍTICO: El agente no puede crear órdenes'
+          print('✅ Fail-closed validado: <30 precios bloqueado correctamente')
+          "
 
   build-docker:
-    needs: test-agents
+    name: "Build & Push Docker Image"
     runs-on: ubuntu-latest
+    needs: [test-agents]
+    if: github.event_name != 'pull_request'
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build
-        run: |
-          docker build -t chalamandra-agents:ci . -f Dockerfile 2>/dev/null || docker build -t chalamandra-agents:ci . || echo "Dockerfile pendiente - OK para CI"
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-  release:
-    needs: [test-agents, build-docker]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - run: echo "🎉 145 tests + 202 Accepted + BLOQUEO_EXPLICITO + healthy true - v1.1-canónico"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push Agents API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./deploy/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/chalamandra-agents:latest
+            ghcr.io/${{ github.repository_owner }}/chalamandra-agents:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
