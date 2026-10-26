@@ -41,6 +41,12 @@ jobs:
       - name: Run every test (fail closed)
         run: python -m pytest -q --junitxml=junit-agents.xml
 
+      - name: Ruff lint gate
+        run: python -m ruff check api adapters core dynamics pipeline registry security telemetry tests
+
+      - name: Mypy type-check gate
+        run: python -m mypy api adapters core dynamics pipeline registry security telemetry
+
       - name: Preserve test report
         if: always()
         uses: actions/upload-artifact@v4
