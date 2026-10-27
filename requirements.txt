@@ -6,7 +6,4 @@ azure-keyvault-secrets>=4.9.0
 numpy==2.5.3
 scipy==1.18.1
 PyJWT>=2.8.0
-openai>=1.0.0
-google-generativeai>=0.5.0
-ollama>=0.1.0
 PyNaCl>=1.5,<2
