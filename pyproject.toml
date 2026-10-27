@@ -12,6 +12,7 @@ dependencies = [
     # dynamics (sistemas dinámicos con retardo)
     "numpy>=2.5",
     "scipy>=1.18",
+    "PyNaCl>=1.5,<2",
 ]
 
 [project.optional-dependencies]
