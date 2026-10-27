@@ -139,3 +139,14 @@ def get_run_tasks(run_id: str) -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute("SELECT * FROM tasks WHERE run_id = ?", (run_id,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_tasks_by_run(run_id: str) -> list[dict]:
+    """Devuelve todas las tareas de un run_id. Usado por GET /internal/v1/orchestration/runs/{id}."""
+    init_db()
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "SELECT * FROM tasks WHERE run_id = ? ORDER BY created_at",
+            (run_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]

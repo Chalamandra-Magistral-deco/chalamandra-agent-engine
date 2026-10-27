@@ -236,9 +236,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/subscriptions":
-            if not self._authorized(require_token=True, required_scope="subscriptions:write"):
-                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                return
             if not self._authorized(require_token=True, required_scope="subscriptions:read"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
@@ -247,10 +244,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/internal/v1/orchestration/runs/"):
+            if not self._authorized(require_token=True, required_scope="results:read"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             run_id = path.split("/")[-1]
-            # Buscamos en el bus (simulamos leyendo todas las tareas asociadas a ese run)
-            tasks = task_bus._read_all(task_bus._tasks_file())  # type: ignore[attr-defined]
-            run_tasks = [t for t in tasks if t.get("run_id") == run_id]
+            run_tasks = task_bus.get_tasks_by_run(run_id)
             if not run_tasks:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
                 return
@@ -388,6 +386,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/internal/v1/tasks/") and path.endswith("/results"):
+            if not self._authorized(require_token=True, required_scope="results:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             task_id = path.split("/")[-2]
             body = self._read_json_body()
             if not body:
@@ -483,6 +484,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path in {"/v1/plan", "/v1/tasks"}:
+            if not self._authorized(require_token=True, required_scope="jobs:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             if set(body) != {"task"} or not isinstance(body.get("task"), str):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "expected_task_string"})
                 return
