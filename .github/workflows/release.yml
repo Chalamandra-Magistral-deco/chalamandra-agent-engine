@@ -65,11 +65,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout canonical CatedralX source
+        uses: actions/checkout@v4
+        with:
+          repository: ChalamandraX/CatedralX
+          ref: 62f7c628ed307341efe81615f4ad83b440bdbf7e
+          path: CatedralX
+          persist-credentials: false
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build deployment image (fail closed)
         run: docker build --pull --tag chalamandra-agents:ci --file deploy/Dockerfile .
+
+      - name: Verify bundled CatedralX imports
+        run: |
+          docker run --rm --entrypoint python chalamandra-agents:ci -c 'import sys; sys.path.insert(0, "/app/CatedralX/elite"); import psutil; import REASON.razon; print("CatedralX imports OK; psutil", psutil.__version__)'
 
       - name: Start container and verify its health check
         shell: bash
