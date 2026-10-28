@@ -4,6 +4,7 @@ from __future__ import annotations
 import http.client
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -15,7 +16,17 @@ import jwt
 from api import acceptance_store, candidate_store, subscription_store, task_bus, worker_loop
 from api.server import create_server
 
-CATEDRALX_ROOT = Path(__file__).resolve().parents[2] / "CatedralX"
+_default_catedralx_root = Path(__file__).resolve().parents[2] / "CatedralX"
+CATEDRALX_ROOT = Path(os.environ.get("CATEDRALX_PATH", _default_catedralx_root)).resolve()
+if not (CATEDRALX_ROOT / "elite" / "FEX" / "GOVERNANCE" / "economic_cycle.py").is_file() or not (
+    CATEDRALX_ROOT / "elite" / "bin" / "dispatch_agents.py"
+).is_file():
+    import pytest
+
+    pytest.skip(
+        "Canonical CatedralX integration source is not available; set CATEDRALX_PATH to run cross-repo tests.",
+        allow_module_level=True,
+    )
 
 
 def _request(port: int, path: str, token: str) -> tuple[int, dict]:
