@@ -2,6 +2,7 @@
 import base64
 import importlib.util
 import json
+import os
 import threading
 import time
 import uuid
@@ -12,11 +13,18 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-CATEDRALX_ROOT = Path(__file__).resolve().parents[2] / "CatedralX"
+_default_catedralx_root = Path(__file__).resolve().parents[2] / "CatedralX"
+CATEDRALX_ROOT = Path(os.environ.get("CATEDRALX_PATH", _default_catedralx_root)).resolve()
 DISPATCH_SCRIPT = CATEDRALX_ROOT / "elite" / "bin" / "dispatch_agents.py"
+if not DISPATCH_SCRIPT.is_file():
+    pytest.skip(
+        "Canonical CatedralX checkout is not available; set CATEDRALX_PATH to run this cross-repo test.",
+        allow_module_level=True,
+    )
 SPEC = importlib.util.spec_from_file_location("dispatch_agents_e2e", DISPATCH_SCRIPT)
+if SPEC is None or SPEC.loader is None:
+    pytest.fail(f"Cannot load CatedralX dispatcher at {DISPATCH_SCRIPT}")
 dispatch_agents = importlib.util.module_from_spec(SPEC)
-assert SPEC and SPEC.loader
 SPEC.loader.exec_module(dispatch_agents)
 
 
