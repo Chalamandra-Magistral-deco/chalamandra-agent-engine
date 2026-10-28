@@ -183,17 +183,23 @@ def _validate_authorized_business_proposal(payload: dict) -> dict:
     proposal = payload.get("proposal")
     authorization = payload.get("authorization")
     boundary = payload.get("execution_boundary")
-    if not all(isinstance(item, dict) for item in (
-        measurement, assessment, proposal, authorization, boundary
-    )):
-        raise ValueError("proposal_contract_section_missing")
+    if not isinstance(measurement, dict):
+        raise ValueError("proposal_measurement_section_missing")
+    if not isinstance(assessment, dict):
+        raise ValueError("proposal_assessment_section_missing")
+    if not isinstance(proposal, dict):
+        raise ValueError("proposal_details_section_missing")
+    if not isinstance(authorization, dict):
+        raise ValueError("proposal_authorization_section_missing")
+    if not isinstance(boundary, dict):
+        raise ValueError("proposal_execution_boundary_section_missing")
 
     for field in ("metric", "source", "period", "unit", "formula", "observed_at"):
         value = measurement.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"measurement_{field}_missing")
     numeric_value = measurement.get("value")
-    if isinstance(numeric_value, bool):
+    if numeric_value is None or isinstance(numeric_value, bool):
         raise ValueError("measurement_value_invalid")
     try:
         numeric_value = float(numeric_value)

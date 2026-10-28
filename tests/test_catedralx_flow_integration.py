@@ -146,7 +146,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
         assert "external_contact" in captured["prompt"]
 
         read_token = jwt.encode(
-            {"scope": "results:read", "sub": "independent-verifier", "exp": int(time.time()) + 60},
+            {"scope": "orchestration:read results:read", "sub": "independent-verifier", "exp": int(time.time()) + 60},
             secret,
             algorithm="HS256",
         )
@@ -298,7 +298,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
 
         read_jwt = jwt.encode(
             {
-                "scope": "jobs:read results:read",
+                "scope": "jobs:read orchestration:read results:read",
                 "exp": int(time.time()) + 120,
                 "sub": "isolated-test-reader",
             },

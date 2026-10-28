@@ -116,7 +116,7 @@ def test_catedralx_to_agents_api_worker_and_independent_acceptance(tmp_path, mon
         assert candidate_result["evidence"][0]["observed_at"] == observed_at
         assert candidate_result["evidence"][0]["market_source"] == payload["source"]
 
-        read_token = _make_jwt(jwt_secret, "results:read")
+        read_token = _make_jwt(jwt_secret, "orchestration:read results:read")
         status, run = _http_json(
             f"{base_url}/internal/v1/orchestration/runs/{run_id}",
             token=read_token,

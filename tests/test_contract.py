@@ -128,7 +128,7 @@ def test_internal_tasks_results_requires_auth(local_api):
         port, f"/internal/v1/tasks/{task_id}/results",
         method="POST",
         payload={"candidate_id": "cand-1", "status": "accepted"},
-        headers={"Authorization": f"Bearer {make_jwt('results:write')}"},
+        headers={"Authorization": f"Bearer {make_jwt('tasks:complete')}"},
     )
     assert status == 202, f"con token esperaba 202, obtuve {status}"
 
@@ -144,7 +144,7 @@ def test_internal_orchestration_runs_get_requires_auth(local_api):
 
     status, _ = request(
         port, f"/internal/v1/orchestration/runs/{run_id}",
-        headers={"Authorization": f"Bearer {make_jwt('results:read')}"},
+        headers={"Authorization": f"Bearer {make_jwt('orchestration:read')}"},
     )
     assert status in (200, 404), f"con token esperaba 200/404, obtuve {status}"
 
@@ -205,7 +205,7 @@ def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(loca
     status, run = request(
         port,
         f"/internal/v1/orchestration/runs/{run_id}",
-        headers={"Authorization": f"Bearer {make_jwt('results:read')}"},
+        headers={"Authorization": f"Bearer {make_jwt('orchestration:read')}"},
     )
     assert status == 200
     assert run["status"] == "awaiting_acceptance"

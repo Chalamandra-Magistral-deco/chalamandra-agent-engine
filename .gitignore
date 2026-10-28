@@ -9,3 +9,7 @@ build/
 .coverage
 logs/
 .env
+.env.*
+**/.env
+**/.env.*
+!.env.example
