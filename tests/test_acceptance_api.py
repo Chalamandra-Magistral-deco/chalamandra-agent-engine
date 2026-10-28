@@ -8,7 +8,7 @@ import jwt
 from api.server import create_server
 from api import acceptance_store
 
-TEST_JWT_SECRET = "test-verifier-secret"
+TEST_JWT_SECRET = "test-verifier-secret-32-bytes-minimum"
 
 def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write"):
     import time
@@ -76,10 +76,13 @@ def test_get_result_blocked_with_rejection(mock_acc, mock_res, api_server):
 @patch("api.candidate_store.get_candidate")
 @patch("api.candidate_store.compute_evidence_digest")
 def test_post_acceptance_persists_record(mock_digest, mock_get_candidate, api_server, tmp_path):
-    mock_get_candidate.return_value = {"candidate_id": "test-123", "evidence": []}
+    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
     mock_digest.return_value = "h"
     
-    with patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acc.jsonl"):
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acc.jsonl"),
+        patch("api.task_bus.mark_result_accepted", return_value=0),
+    ):
         payload = {"decision_id": "dec-1", "candidate_id": "test-123", "outcome": "accepted",
                    "verifier_id": "tester", "evidence_digest": "h", "trace_id": "t"}
         payload["signature"] = acceptance_store.generate_signature(payload)
@@ -110,3 +113,33 @@ def test_acceptance_with_tampered_field_fails(api_server):
     status, body = _post(f"{api_server}/v1/acceptance", payload, {"Authorization": f"Bearer {make_jwt()}"})
     assert status == 400
     assert "firma" in body["error"].lower() or "signature" in body["error"].lower()
+
+
+
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
+def test_acceptance_cannot_publish_blocked_candidate(
+    mock_digest, mock_get_candidate, api_server
+):
+    mock_get_candidate.return_value = {
+        "candidate_id": "blocked-123",
+        "status": "blocked",
+        "evidence": [],
+    }
+    mock_digest.return_value = "digest-blocked"
+    payload = {
+        "decision_id": "decision-blocked-1",
+        "candidate_id": "blocked-123",
+        "outcome": "accepted",
+        "verifier_id": "tester",
+        "evidence_digest": "digest-blocked",
+        "trace_id": "trace-blocked",
+    }
+    payload["signature"] = acceptance_store.generate_signature(payload)
+    status, body = _post(
+        f"{api_server}/v1/acceptance",
+        payload,
+        {"Authorization": f"Bearer {make_jwt()}"},
+    )
+    assert status == 400
+    assert "resultados bloqueados" in body["error"]

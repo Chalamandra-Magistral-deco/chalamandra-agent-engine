@@ -87,3 +87,18 @@ async def test_master_execute_task():
 
     assert result["status"] == "completed"
     assert result["step_count"] == 1
+
+
+
+@pytest.mark.asyncio
+async def test_master_rejects_unregistered_task_tool_before_decomposition():
+    master = Master()
+
+    class MustNotDecompose:
+        async def decompose(self, task):
+            raise AssertionError("Invalid allowlist must fail before planning")
+
+    master.decomposer = MustNotDecompose()
+
+    with pytest.raises(ValueError, match="Herramientas no registradas"):
+        await master.execute_task("Review economic proposal", allowed_tools=["shell_arbitrary"])

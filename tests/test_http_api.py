@@ -241,7 +241,7 @@ def test_internal_run_status_requires_orchestration_read_scope(local_api, monkey
         "trace_id": "trace-internal-1",
         "updated_at": "2026-10-25T00:00:00+00:00",
     }
-    monkeypatch.setattr(task_bus, "get_run_tasks", lambda run_id: [task] if run_id == task["run_id"] else [])
+    monkeypatch.setattr(task_bus, "get_tasks_by_run", lambda run_id: [task] if run_id == task["run_id"] else [])
 
     status, result = request(
         port,
@@ -264,7 +264,7 @@ def test_internal_run_status_requires_orchestration_read_scope(local_api, monkey
         headers={"Authorization": f"Bearer {make_jwt(scopes='orchestration:read')}"},
     )
     assert status == 200
-    assert result["status"] == "completed"
+    assert result["status"] == "awaiting_acceptance"
     assert result["task_ids"] == ["task-internal-1"]
     assert result["trace_id"] == "trace-internal-1"
 

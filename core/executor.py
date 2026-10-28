@@ -101,6 +101,8 @@ class Executor:
         self,
         subtask: Subtask,
         context: dict[str, SubtaskResult],
+        *,
+        allowed_tools_override: set[str] | None = None,
     ) -> SubtaskResult:
         """Ejecuta una subtask individual construyendo su prompt con el contexto previo."""
         dep_contexts = []
@@ -124,6 +126,8 @@ class Executor:
         tool_registry = getattr(self.master, "tools", None)
         registered_tools = tool_registry.available() if tool_registry is not None else []
         allowed_tools = list(profile.tools_available(registered_tools))
+        if allowed_tools_override is not None:
+            allowed_tools = [name for name in allowed_tools if name in allowed_tools_override]
 
         # Selección centralizada de modelo vía ModelRouter.
         # Prioridad:
@@ -205,6 +209,10 @@ class Executor:
                     try:
                         if not isinstance(name, str) or not isinstance(arguments, dict):
                             raise ValueError("Llamada nativa mal formada.")
+                        if allowed_tools_override is not None and name not in allowed_tools_override:
+                            raise PermissionError(
+                                f"La herramienta {name!r} está fuera de la allowlist de la tarea."
+                            )
                         result = await self.master.execute_agent_tool_call(
                             profile.name, {"name": name, "arguments": arguments}
                         )
@@ -271,6 +279,8 @@ class Executor:
         self,
         task: str,
         subtasks: list[Subtask],
+        *,
+        allowed_tools: list[str] | None = None,
     ) -> ExecutionSummary:
         """Ejecuta el plan de subtasks respetando los niveles topológicos y resolviendo dependencias."""
         summary = ExecutionSummary(task=task)
@@ -286,8 +296,16 @@ class Executor:
             summary.errors.append(str(err))
             return summary
 
+        allowed_tool_set = set(allowed_tools) if allowed_tools is not None else None
         for level in levels:
-            tasks = [self.execute_subtask(st, summary.subtask_results) for st in level]
+            tasks = [
+                self.execute_subtask(
+                    st,
+                    summary.subtask_results,
+                    allowed_tools_override=allowed_tool_set,
+                )
+                for st in level
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             for st, res in zip(level, results):

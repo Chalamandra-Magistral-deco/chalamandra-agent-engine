@@ -32,7 +32,7 @@ def _read_all(path: Path) -> list[dict]:
     return records
 
 def _verifier_secret() -> bytes:
-    secret = os.environ.get("CHALAMANDRA_VERIFIER_SECRET")
+    secret = os.environ.get("CHALAMANDRA_HMAC_SECRET") or os.environ.get("CHALAMANDRA_VERIFIER_SECRET")
     if not secret:
         raise ValueError("CHALAMANDRA_VERIFIER_SECRET no configurado. El verificador no puede operar.")
     return secret.encode("utf-8")
@@ -72,6 +72,11 @@ def record_acceptance(decision: dict[str, Any]) -> str:
     candidate = candidate_store.get_candidate(str(cid))
     if not candidate:
         raise ValueError("Candidato no encontrado para verificar la evidencia.")
+    if decision.get("outcome") == "accepted" and candidate.get("status") != "candidate":
+        raise ValueError(
+            "Solo un candidato ejecutado y elegible puede recibir aceptación; "
+            "resultados bloqueados o fallidos no son publicables."
+        )
     expected_evidence_digest = candidate_store.compute_evidence_digest(candidate)
     if decision.get("evidence_digest") != expected_evidence_digest:
         raise ValueError("El evidence_digest no coincide con la evidencia del candidato.")

@@ -17,7 +17,11 @@ def _dead_letter_file() -> Path:
     return _state_dir() / "dead_letters.jsonl"
 
 def _webhook_secret() -> bytes:
-    secret = os.environ.get("CHALAMANDRA_WEBHOOK_SECRET", "default-webhook-secret")
+    secret = os.environ.get("CHALAMANDRA_WEBHOOK_SECRET", "").strip()
+    if len(secret.encode("utf-8")) < 32:
+        raise RuntimeError(
+            "CHALAMANDRA_WEBHOOK_SECRET must be configured with at least 32 bytes"
+        )
     return secret.encode("utf-8")
 
 def _sign_payload(payload: dict) -> str:

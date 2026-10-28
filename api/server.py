@@ -122,7 +122,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _authorized(self, *, require_token: bool = True, required_scope: str | None = None) -> bool:
+    def _authorized(
+        self,
+        *,
+        require_token: bool = True,
+        required_scope: str | None = None,
+        required_subject: str | None = None,
+    ) -> bool:
         if not require_token:
             return True
         import jwt
@@ -137,6 +143,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 scopes = payload.get("scope", "").split()
                 if required_scope not in scopes:
                     return False
+            if required_subject and payload.get("sub") != required_subject:
+                return False
             return True
         except jwt.PyJWTError:
             return False
@@ -211,8 +219,16 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "reasons": acceptance.get("reasons", [])
                 })
                 return
-                
-            self._send_json(HTTPStatus.OK, result)
+            delivered = dict(result)
+            delivered["delivery_status"] = "accepted"
+            delivered["acceptance"] = {
+                "outcome": "accepted",
+                "decision_id": acceptance.get("decision_id"),
+                "verifier_id": acceptance.get("verifier_id"),
+                "decided_at": acceptance.get("decided_at"),
+                "trace_id": acceptance.get("trace_id"),
+            }
+            self._send_json(HTTPStatus.OK, delivered)
             return
 
         if path.startswith("/v1/jobs/"):
@@ -236,9 +252,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/subscriptions":
-            if not self._authorized(require_token=True, required_scope="subscriptions:write"):
-                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-                return
             if not self._authorized(require_token=True, required_scope="subscriptions:read"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
@@ -251,20 +264,27 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             run_id = path.split("/")[-1]
-            run_tasks = task_bus.get_run_tasks(run_id)
+            run_tasks = task_bus.get_tasks_by_run(run_id)
             if not run_tasks:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
                 return
-            terminal_statuses = {"completed", "candidate", "accepted", "rejected", "blocked", "failed"}
-            status = (
-                "completed"
-                if all(task.get("status") in terminal_statuses for task in run_tasks)
-                else "executing"
-            )
+            task_statuses = [t.get("status", "queued") for t in run_tasks]
+            terminal = {"candidate", "blocked", "failed", "completed", "accepted", "rejected"}
+            if not all(status_value in terminal for status_value in task_statuses):
+                status = "executing"
+            elif any(status_value in {"blocked", "failed", "rejected"} for status_value in task_statuses):
+                status = "completed_with_errors"
+            elif any(status_value == "candidate" for status_value in task_statuses):
+                status = "awaiting_acceptance"
+            elif all(status_value == "accepted" for status_value in task_statuses):
+                status = "accepted"
+            else:
+                status = "completed"
             self._send_json(HTTPStatus.OK, {
                 "run_id": run_id,
                 "status": status,
-                "task_ids": [task["task_id"] for task in run_tasks],
+                "task_ids": [t["task_id"] for t in run_tasks],
+                "task_statuses": task_statuses,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "trace_id": run_tasks[0].get("trace_id", "")
             })
@@ -345,9 +365,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing_signature"})
                     return
                 decision_id = acceptance_store.record_acceptance(body)
-                
-                # FASE 4: Si es aceptado, disparar webhooks de distribución
+
+                # Close the orchestration state only after the independent gate accepts it.
                 if body.get("outcome") == "accepted":
+                    task_bus.mark_result_accepted(str(body.get("candidate_id") or ""))
+
+                    # FASE 4: Si es aceptado, disparar webhooks de distribución
                     webhook_dispatcher.dispatch_event(
                         event_type="result.accepted",
                         result_id=str(body.get("candidate_id") or ""),
@@ -363,33 +386,94 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/internal/v1/orchestration/runs":
-            if not self._authorized(require_token=True, required_scope="orchestration:run"):
+            if not self._authorized(
+                require_token=True,
+                required_scope="orchestration:run",
+                required_subject="catedralx-service",
+            ):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             body = self._read_json_body()
-            if not body or "objective" not in body:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_trigger"})
+            if body is None:
                 return
-            
+            objective = body.get("objective")
+            if not isinstance(objective, str) or not objective.strip() or len(objective) > MAX_TASK_CHARS:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_objective"})
+                return
+
+            payload = body.get("payload", {})
+            if not isinstance(payload, dict):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "payload_must_be_object"})
+                return
+            permissions = body.get("permissions", {})
+            if not isinstance(permissions, dict):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "permissions_must_be_object"})
+                return
+            allowed_tools = permissions.get("allowed_tools", [])
+            if not isinstance(allowed_tools, list) or any(
+                not isinstance(tool, str) or not tool.strip() or len(tool) > 128
+                for tool in allowed_tools
+            ) or len(allowed_tools) > 32:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_allowed_tools"})
+                return
+            registered_tools = set(self.server.master.tools.available())
+            unknown_tools = sorted(set(allowed_tools).difference(registered_tools))
+            if unknown_tools:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "unknown_allowed_tools",
+                    "tools": unknown_tools,
+                })
+                return
+            success_criteria = body.get("success_criteria", ["Task completed"])
+            if not isinstance(success_criteria, list) or not success_criteria or any(
+                not isinstance(item, str) or not item.strip() or len(item) > 1000
+                for item in success_criteria
+            ) or len(success_criteria) > 20:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_success_criteria"})
+                return
+
+            idem_key = self.headers.get("Idempotency-Key")
+            if idem_key is not None and (
+                not idem_key.strip() or len(idem_key) < 8 or len(idem_key) > 128
+                or "\r" in idem_key or "\n" in idem_key
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
+                return
+
             run_id = str(uuid.uuid4())
             task_id = str(uuid.uuid4())
             trace_id = self._get_trace_id()
-            
             contract = {
                 "task_id": task_id,
                 "run_id": run_id,
-                "objective": body["objective"],
-                "required_tools": body.get("permissions", {}).get("allowed_tools", []),
-                "success_criteria": body.get("success_criteria", ["Task completed"]),
-                "trace_id": trace_id
+                "objective": objective.strip(),
+                "required_tools": allowed_tools,
+                "success_criteria": success_criteria,
+                "payload": payload,
+                "trace_id": trace_id,
             }
-            
-            task_bus.enqueue_task(contract)
-            
+            try:
+                task_id = task_bus.enqueue_task(contract, idempotency_key=idem_key)
+            except ValueError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {
+                    "error": "idempotency_conflict",
+                    "detail": str(exc)[:500],
+                })
+                return
+            existing_task = task_bus.get_task_status(task_id)
+            if not existing_task:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "task_persistence_failed"})
+                return
+            actual_run_id = existing_task.get("run_id")
+            if actual_run_id is None:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "idempotency_key_bound_to_non_run_task"})
+                return
             self._send_json(HTTPStatus.ACCEPTED, {
-                "run_id": run_id,
-                "status": "queued",
-                "trace_id": trace_id
+                "run_id": actual_run_id,
+                "task_id": task_id,
+                "status": existing_task.get("status", "queued"),
+                "trace_id": existing_task.get("trace_id") or trace_id,
+                "idempotent_replay": actual_run_id != run_id,
             })
             return
 
@@ -495,6 +579,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path in {"/v1/plan", "/v1/tasks"}:
+            if not self._authorized(require_token=True, required_scope="jobs:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             if set(body) != {"task"} or not isinstance(body.get("task"), str):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "expected_task_string"})
                 return

@@ -280,7 +280,23 @@ class Master:
             {"name": tool, "arguments": kwargs},
         )
 
-    async def execute_task(self, task: str):
-        """Descompone y ejecuta una tarea completa mediante el Executor DAG."""
+    async def execute_task(self, task: str, *, allowed_tools: Sequence[str] | None = None):
+        """Execute a task; an explicit tool allowlist narrows every subtask's permissions."""
+        if allowed_tools is not None:
+            if isinstance(allowed_tools, (str, bytes)) or any(
+                not isinstance(name, str) or not name.strip() for name in allowed_tools
+            ):
+                raise ValueError("allowed_tools debe ser una secuencia de nombres válidos")
+            permitted = set(allowed_tools)
+            unknown = permitted.difference(self.tools.available())
+            if unknown:
+                raise ValueError(f"Herramientas no registradas: {sorted(unknown)}")
+            allowed_tools = sorted(permitted)
         subtasks = await self.decomposer.decompose(task)
-        return await self.executor.execute_plan(task, subtasks)
+        if allowed_tools is None:
+            return await self.executor.execute_plan(task, subtasks)
+        return await self.executor.execute_plan(
+            task,
+            subtasks,
+            allowed_tools=allowed_tools,
+        )

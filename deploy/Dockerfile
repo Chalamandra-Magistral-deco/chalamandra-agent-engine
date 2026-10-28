@@ -1,3 +1,5 @@
+ARG CATEDRALX_BASE_IMAGE=catedralx:v1.0-canonico
+FROM ${CATEDRALX_BASE_IMAGE} AS catedralx
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     CATEDRALX_PATH=/app/CatedralX \
@@ -25,6 +27,8 @@ COPY registry/ ./registry/
 COPY security/ ./security/
 COPY telemetry/ ./telemetry/
 COPY dynamics/ ./dynamics/
+COPY --from=catedralx /app/elite /app/CatedralX/elite
+COPY --from=catedralx /app/BIN /app/CatedralX/BIN
 RUN chown -R chalamandra:chalamandra /app /home/chalamandra/.local
 USER chalamandra
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
