@@ -68,9 +68,10 @@ jobs:
       - name: Checkout canonical CatedralX source
         uses: actions/checkout@v4
         with:
-          repository: ChalamandraX/CatedralX
+          repository: Chalamandra-Magistral-deco/CatedralX
           ref: 62f7c628ed307341efe81615f4ad83b440bdbf7e
           path: CatedralX
+          token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
 
       - name: Set up Docker Buildx
