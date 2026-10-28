@@ -1,0 +1,8 @@
+FROM chalamandra-agent-engine:reconciled-candidate-20261028-1305
+COPY api/server.py /app/api/server.py
+COPY api/webhook_dispatcher.py /app/api/webhook_dispatcher.py
+COPY tests /app/tests
+COPY verifier /app/verifier
+USER root
+RUN python -m pip install --no-cache-dir "pytest>=8.0" "pytest-asyncio>=0.24,<2"
+USER chalamandra

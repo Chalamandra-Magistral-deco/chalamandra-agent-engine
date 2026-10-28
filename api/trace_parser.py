@@ -20,8 +20,7 @@ def parse_traceparent(traceparent: Optional[str]) -> Optional[Dict[str, str]]:
         return None
     if parent_id == "0" * 16:
         return None
-    if version == "00" and flags != "00":
-        return None
+    # Para version 00 se admite el bit sampled (flags=01) y se ignoran bits reservados.
     if version == "ff":
         return None
         

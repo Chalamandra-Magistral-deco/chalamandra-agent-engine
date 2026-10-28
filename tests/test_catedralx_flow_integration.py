@@ -11,7 +11,11 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import subprocess
+
 import jwt
+import pytest
+from nacl.signing import SigningKey
 
 from api import acceptance_store, candidate_store, subscription_store, task_bus, worker_loop
 from api.server import create_server
@@ -27,6 +31,34 @@ if not (CATEDRALX_ROOT / "elite" / "FEX" / "GOVERNANCE" / "economic_cycle.py").i
         "Canonical CatedralX integration source is not available; set CATEDRALX_PATH to run cross-repo tests.",
         allow_module_level=True,
     )
+
+
+TEST_VERIFIER_SEED_HEX = "33" * 32
+TEST_VERIFIER_KEY = SigningKey(bytes.fromhex(TEST_VERIFIER_SEED_HEX))
+VERIFIER_CLI = Path(__file__).resolve().parents[1] / "verifier" / "independent_acceptance_verifier.py"
+
+
+def _sign_decision(decision: dict) -> str:
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+        "CHALAMANDRA_ED25519_SEED": TEST_VERIFIER_SEED_HEX,
+        "CHALAMANDRA_VERIFIER_ID": decision["verifier_id"],
+    }
+    action = "ACCEPT" if decision["outcome"] == "accepted" else "REJECT"
+    confirmation = f"{action}:{decision['candidate_id']}"
+    result = subprocess.run(
+        [sys.executable, str(VERIFIER_CLI), "--confirm", confirmation],
+        input=json.dumps(decision),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=5,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(f"Isolated verifier failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)["signature"]
 
 
 def _request(port: int, path: str, token: str) -> tuple[int, dict]:
@@ -52,8 +84,17 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
     dispatch_agents = importlib.util.module_from_spec(dispatch_spec)
     dispatch_spec.loader.exec_module(dispatch_agents)
 
-    secret = "synthetic-integration-secret-for-tests-only-2026"
+    secret = "synthetic-integration-general-jwt-secret-2026"
+    service_secret = "synthetic-catedralx-service-jwt-secret-2026"
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", secret)
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", service_secret)
+    monkeypatch.setenv(
+        "CHALAMANDRA_VERIFIER_PUBLIC_KEY", TEST_VERIFIER_KEY.verify_key.encode().hex()
+    )
+    monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", "isolated-test-verifier")
+    monkeypatch.delenv("CHALAMANDRA_ED25519_SEED", raising=False)
+    monkeypatch.delenv("CHALAMANDRA_VERIFIER_SECRET", raising=False)
+    monkeypatch.delenv("CHALAMANDRA_HMAC_SECRET", raising=False)
     monkeypatch.setenv("CHALAMANDRA_API_TOKEN", "synthetic-api-token-for-tests-only")
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
     monkeypatch.setattr(task_bus, "_state_dir", lambda: tmp_path)
@@ -112,18 +153,27 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
     try:
         api_url = f"http://127.0.0.1:{server.server_address[1]}"
         idempotency_key = "catedralx-economic-cycle:" + cycle_id
+        # The general JWT key must not authenticate CatedralX service dispatch.
+        with pytest.raises(RuntimeError, match="HTTP 401"):
+            dispatch_agents.dispatch_task(
+                "catedralx_economic_proposal_review",
+                proposal,
+                api_url,
+                secret,
+                idempotency_key=idempotency_key,
+            )
         first = dispatch_agents.dispatch_task(
             "catedralx_economic_proposal_review",
             proposal,
             api_url,
-            secret,
+            service_secret,
             idempotency_key=idempotency_key,
         )
         replay = dispatch_agents.dispatch_task(
             "catedralx_economic_proposal_review",
             proposal,
             api_url,
-            secret,
+            service_secret,
             idempotency_key=idempotency_key,
         )
         assert first["run_id"] == replay["run_id"]
@@ -198,12 +248,18 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
     from FEX.GOVERNANCE.economic_cycle import registrar_evento
 
     secret = "deterministic-business-flow-test-jwt-secret-2026"
+    service_secret = "deterministic-business-catedralx-service-secret-2026"
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", secret)
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", service_secret)
     monkeypatch.setenv(
-        "CHALAMANDRA_VERIFIER_SECRET",
-        "deterministic-business-flow-test-verifier-secret-2026",
+        "CHALAMANDRA_VERIFIER_PUBLIC_KEY", TEST_VERIFIER_KEY.verify_key.encode().hex()
     )
+    monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", "isolated-business-test-verifier")
+    monkeypatch.delenv("CHALAMANDRA_ED25519_SEED", raising=False)
+    monkeypatch.delenv("CHALAMANDRA_VERIFIER_SECRET", raising=False)
+    monkeypatch.delenv("CHALAMANDRA_HMAC_SECRET", raising=False)
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
     for store in (acceptance_store, candidate_store, subscription_store, task_bus):
         monkeypatch.setattr(store, "_state_dir", lambda: tmp_path)
 
@@ -253,7 +309,13 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         },
         path=ledger, cycle_id=cycle_id,
     )
-    proposal_payload = dispatch_agents.load_authorized_proposal(ledger, cycle_id)
+    scanner_spec = importlib.util.spec_from_file_location(
+        "catedralx_authorized_cycle_scanner",
+        CATEDRALX_ROOT / "elite" / "bin" / "dispatch_authorized_cycles.py",
+    )
+    assert scanner_spec and scanner_spec.loader
+    cycle_scanner = importlib.util.module_from_spec(scanner_spec)
+    scanner_spec.loader.exec_module(cycle_scanner)
 
     server = create_server("127.0.0.1", 0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -288,15 +350,30 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
             return exc.code, json.loads(raw) if raw else {}
 
     try:
-        idempotency_key = "authorized-cycle:" + cycle_id
-        queued = dispatch_agents.dispatch_task(
-            "catedralx_economic_proposal_review",
-            proposal_payload,
-            f"http://127.0.0.1:{port}",
-            secret,
-            idempotency_key=idempotency_key,
+        dispatch_log = tmp_path / "dispatches.jsonl"
+        scanned = cycle_scanner.scan_and_dispatch(
+            ledger=ledger,
+            dispatch_log=dispatch_log,
+            api_url=f"http://127.0.0.1:{port}",
+            secret=service_secret,
         )
+        assert scanned["eligible"] == 1
+        assert len(scanned["dispatched"]) == 1
+        queued = {
+            "status": scanned["dispatched"][0]["api_status"],
+            "run_id": scanned["dispatched"][0]["run_id"],
+            "task_id": scanned["dispatched"][0]["task_id"],
+            "trace_id": scanned["dispatched"][0]["trace_id"],
+        }
         assert queued["status"] == "queued"
+        repeated = cycle_scanner.scan_and_dispatch(
+            ledger=ledger,
+            dispatch_log=dispatch_log,
+            api_url=f"http://127.0.0.1:{port}",
+            secret=service_secret,
+        )
+        assert repeated["dispatched"] == []
+        assert repeated["already_dispatched"] == 1
 
         task = task_bus.get_next_task()
         assert task is not None
@@ -351,7 +428,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
             "decided_at": datetime.now(timezone.utc).isoformat(),
             "trace_id": candidate["trace_id"],
         }
-        decision["signature"] = acceptance_store.generate_signature(decision)
+        decision["signature"] = _sign_decision(decision)
         write_jwt = jwt.encode(
             {
                 "scope": "acceptance:write",
@@ -396,6 +473,33 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         assert delivered["execution_boundary"]["prohibited"]
         assert delivered["orders_created"] is False
         assert delivered["orders_executed"] is False
+
+        from api.catedralx_feedback import reconcile_feedback_once
+        feedback = reconcile_feedback_once(ledger_path=ledger)
+        assert feedback["processed_cycles"] == [cycle_id]
+        assert feedback["errors"] == []
+        from FEX.GOVERNANCE.economic_cycle import resumir_ciclos
+        completed_cycle = next(
+            row for row in resumir_ciclos(ledger)["cycles"] if row["cycle_id"] == cycle_id
+        )
+        assert completed_cycle["events"] == ["measure", "evaluate", "propose", "authorize", "verify", "feedback"]
+        assert completed_cycle["complete"] is True
+
+        acceptance_file = acceptance_store._acceptance_file()
+        assert acceptance_file.name == "acceptance_store.jsonl"
+        acceptance_record = json.loads(acceptance_file.read_text().splitlines()[-1])
+        assert len(acceptance_record["signature"]) == 128
+        assert acceptance_record["trace_id"] == candidate["trace_id"]
+
+        trace_file = tmp_path / "traces.jsonl"
+        trace_rows = [json.loads(line) for line in trace_file.read_text().splitlines()]
+        dispatched_trace = [
+            row for row in trace_rows
+            if row["path"] == "/internal/v1/orchestration/runs"
+            and row["status"] == 202 and row["trace_id"] == queued["trace_id"]
+        ]
+        assert dispatched_trace
+        assert dispatched_trace[0]["traceparent"].startswith("00-")
     finally:
         server.shutdown()
         server.server_close()

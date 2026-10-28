@@ -38,6 +38,7 @@ def _fake_module(captured: dict):
         contraevidencia={"fuerza_contra": 0.0},
         sources={"decision": {"version": None}},
         cognitive_gate_reasons=[],
+        cognicion={"cathedral_verdict": {"status": "ACCEPTED", "evaluation_hash": "a" * 64}},
     )
 
     def fake_think(sensory_input, historial_precios, ciclo_id):
@@ -124,6 +125,7 @@ def test_explicit_prices_return_signal_without_order_execution(
         inertia=0.2,
         asset="EUR/USD",
         cycle_id=77,
+        trace_id="1234567890abcdef1234567890abcdef",
     )
 
     assert result["status"] == "ok"
@@ -131,6 +133,8 @@ def test_explicit_prices_return_signal_without_order_execution(
     assert result["asset"] == "EUR/USD"
     assert result["decision"] == "HOLD"
     assert result["cycle_id"] == 77
+    assert result["trace_id"] == "1234567890abcdef1234567890abcdef"
+    assert result["evaluation_hash"] == "a" * 64
     assert result["orders_created"] is False
     assert result["orders_executed"] is False
     assert result["coherencia"]["coherencia_direccional"] == 0.9

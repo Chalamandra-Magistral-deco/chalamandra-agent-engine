@@ -11,9 +11,11 @@ from __future__ import annotations
 import importlib
 import math
 import os
+import re
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -188,6 +190,7 @@ def catedralx_reasoning_tool(
     inertia: float = 0.0,
     asset: str = "unspecified",
     cycle_id: int | None = None,
+    trace_id: str | None = None,
     data_source: str = "provided",
     base_currency: str = "EUR",
     quote_currency: str = "USD",
@@ -257,6 +260,19 @@ def catedralx_reasoning_tool(
             ]
         else:
             consistency_warnings = []
+        cognitive_state = getattr(state, "cognicion", {}) or {}
+        central_verdict = cognitive_state.get("cathedral_verdict", {}) if isinstance(cognitive_state, dict) else {}
+        if not isinstance(central_verdict, dict):
+            central_verdict = {}
+        evaluation_hash = central_verdict.get("evaluation_hash")
+        if not isinstance(evaluation_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", evaluation_hash):
+            evaluation_hash = None
+            consistency_warnings.append("La Regla Central no proporcionó un evaluation_hash SHA-256 válido.")
+        trace_candidate = trace_id or uuid.uuid4().hex
+        if not isinstance(trace_candidate, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_candidate) or trace_candidate == "0" * 32:
+            trace_candidate = uuid.uuid4().hex
+            consistency_warnings.append("El trace_id recibido no cumple el formato W3C; se generó uno local.")
+
         directional_decisions = {
             "buy", "sell", "comprar", "vender",
             "entrar_largo", "entrar_corto", "entrada_larga", "entrada_corta",
@@ -285,6 +301,9 @@ def catedralx_reasoning_tool(
             "asset": str(asset).strip() or "unspecified",
             "timestamp": getattr(state, "timestamp", None),
             "cycle_id": cycle,
+            "trace_id": trace_candidate,
+            "evaluation_hash": evaluation_hash,
+            "evaluation_gate": central_verdict.get("status"),
             "decision": decision_value,
             "confidence": float(getattr(state, "confianza", 0.0)),
             "confidence_type": "heuristic_signal_strength_not_probability",

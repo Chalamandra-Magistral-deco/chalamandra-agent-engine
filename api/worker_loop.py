@@ -97,6 +97,12 @@ def _run_catedralx(payload: dict) -> dict:
 
     env = os.environ.copy()
     env["CATEDRALX_SNAPSHOT_PATH"] = temp_path
+    # Propagate W3C trace identity through the subprocess without changing the market snapshot schema.
+    import re
+    trace_id = payload.get("trace_id")
+    env.pop("CATEDRALX_TRACE_ID", None)
+    if isinstance(trace_id, str) and re.fullmatch(r"[0-9a-f]{32}", trace_id) and trace_id != "0" * 32:
+        env["CATEDRALX_TRACE_ID"] = trace_id
     # Use the worker's venv; do not fall back to a system Python without dependencies.
     env["CATEDRALX_PYTHON"] = sys.executable
 
@@ -138,8 +144,8 @@ def _run_catedralx(payload: dict) -> dict:
             }
         required = {
             "result_id", "status", "engine", "decision", "evidence", "assumptions",
-            "risks", "provenance", "trace_id", "analysis_only", "orders_created",
-            "orders_executed",
+            "risks", "provenance", "trace_id", "evaluation_hash", "analysis_only",
+            "orders_created", "orders_executed",
         }
         if not required.issubset(decision):
             return {
@@ -147,6 +153,8 @@ def _run_catedralx(payload: dict) -> dict:
                 "reason": "decision_result_contract_missing_fields",
                 "missing_fields": sorted(required - set(decision)),
             }
+        if not isinstance(decision.get("evaluation_hash"), str) or not __import__("re").fullmatch(r"[0-9a-f]{64}", decision["evaluation_hash"]):
+            return {"status": "BLOCKED", "reason": "decision_result_evaluation_hash_missing_or_invalid"}
         if (
             decision.get("engine") != "CatedralX"
             or decision.get("status") not in {"ACCEPTED", "UNCERTAIN", "REJECTED"}
@@ -305,7 +313,9 @@ def process_task(task: dict) -> dict:
     try:
         # Detectar si es una tarea financiera
         if "financial" in objective.lower() or "historical_prices" in payload:
-            result = _run_catedralx(payload)
+            engine_payload = dict(payload)
+            engine_payload.setdefault("trace_id", task.get("trace_id"))
+            result = _run_catedralx(engine_payload)
             if result.get("engine") == "CatedralX" and result.get("result_id"):
                 # Preservar el DecisionResult, incluso cuando el motor lo marque UNCERTAIN/REJECTED.
                 canonical_decision_result = result

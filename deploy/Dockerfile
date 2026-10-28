@@ -11,7 +11,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     CHALAMANDRA_API_PORT=8766 \
     CHALAMANDRA_STATE_DIR=/home/chalamandra/.local/state/chalamandra
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    procps \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash chalamandra \
     && mkdir -p /home/chalamandra/.local/state/chalamandra/catedralx /home/chalamandra/.local/state/chalamandra/agents \

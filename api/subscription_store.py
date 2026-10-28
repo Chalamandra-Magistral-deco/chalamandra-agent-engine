@@ -33,33 +33,55 @@ def _read_all(path: Path) -> list[dict]:
     return records
 
 def is_safe_url(url: str) -> bool:
-    """Bloquea loopback, redes privadas, link-local y metadata endpoints."""
-    if os.environ.get("CHALAMANDRA_SSRF_ALLOW_LOCALHOST") == "true":
-        return True  # Solo para tests locales
-        
+    """Allow public HTTPS endpoints; test override is restricted to private test targets.
+
+    The test override must never turn off SSRF checks globally. Public HTTP, metadata,
+    link-local, multicast, unspecified, reserved, and mixed public/private DNS results
+    remain blocked even when CHALAMANDRA_SSRF_ALLOW_LOCALHOST=true.
+    """
     try:
         parsed = urlparse(url)
-        if parsed.scheme != "https":
-            return False  # Solo HTTPS en producción
-            
-        hostname = parsed.hostname
-        if not hostname:
+        if parsed.scheme not in {"https", "http"} or not parsed.hostname:
             return False
-            
-        # Bloquear nombres obvios
-        if hostname in ("localhost", "127.0.0.1", "::1", "169.254.169.254"):
+        if parsed.username or parsed.password or parsed.fragment:
             return False
-            
-        # Resolver DNS a IP y validar
-        ip = socket.gethostbyname(hostname)
-        ip_obj = ipaddress.ip_address(ip)
-        
-        # Bloquear IPs privadas o reservadas
-        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast:
+        hostname = parsed.hostname.casefold().rstrip(".")
+        if hostname in {
+            "metadata", "metadata.google.internal", "metadata.azure.internal",
+            "instance-data.ec2.internal",
+        } or hostname.endswith(".metadata.google.internal"):
             return False
-            
-        return True
-    except Exception:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            direct_ip = ipaddress.ip_address(hostname)
+            addresses = {direct_ip}
+        except ValueError:
+            infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in infos
+            }
+        if not addresses:
+            return False
+
+        # These ranges are never valid webhook destinations, including in test mode.
+        if any(
+            ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved
+            for ip in addresses
+        ):
+            return False
+
+        allow_test_local = os.environ.get("CHALAMANDRA_SSRF_ALLOW_LOCALHOST") == "true"
+        private_or_loopback = all(ip.is_private or ip.is_loopback for ip in addresses)
+        if private_or_loopback:
+            return allow_test_local
+
+        # Never accept mixed public/private DNS answers. Only public HTTPS is allowed
+        # outside the narrowly scoped test override above.
+        if not all(ip.is_global for ip in addresses):
+            return False
+        return parsed.scheme == "https"
+    except (OSError, ValueError, TypeError):
         return False
 
 def create_subscription(endpoint_url: str, event_types: list[str]) -> dict:

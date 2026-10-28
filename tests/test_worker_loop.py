@@ -117,6 +117,8 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
                 "status": "ACCEPTED",
                 "engine": "CatedralX",
                 "decision": "hold",
+                "evaluation_hash": "b" * 64,
+                "evaluation_gate": "ACCEPTED",
                 "evidence": [],
                 "assumptions": [],
                 "risks": [],
@@ -139,9 +141,11 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
         "current_price": prices[-1],
         "observed_at": observed_at,
         "source": "test_verified_feed",
+        "trace_id": "1234567890abcdef1234567890abcdef",
     })
 
     assert captured["env"]["CATEDRALX_PYTHON"] == sys.executable
+    assert captured["env"]["CATEDRALX_TRACE_ID"] == "1234567890abcdef1234567890abcdef"
     assert captured["cwd"] == tmp_path
     assert captured["timeout"] == 60
     assert result["status"] == "ACCEPTED"

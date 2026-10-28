@@ -23,7 +23,8 @@ import pytest
 from api.server import create_server
 from core.master import Master
 
-TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
+TEST_JWT_SECRET = "test-general-jwt-secret-minimum-32-bytes"
+TEST_CATEDRALX_JWT_SECRET = "test-catedralx-service-jwt-secret-2026"
 TEST_TOKEN = "test-api-token-contract-32-bytes-min"
 
 
@@ -35,11 +36,13 @@ def make_jwt(
     payload = {"scope": scopes, "exp": int(time.time()) + 3600}
     if subject:
         payload["sub"] = subject
-    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
+    secret = TEST_CATEDRALX_JWT_SECRET if subject == "catedralx-service" else TEST_JWT_SECRET
+    return jwt.encode(payload, secret, algorithm="HS256")
 
 
 def _make_server(monkeypatch, tmp_path, model_calls_enabled: bool):
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", TEST_CATEDRALX_JWT_SECRET)
     monkeypatch.setenv("CHALAMANDRA_API_TOKEN", TEST_TOKEN)
     monkeypatch.setenv(
         "CHALAMANDRA_API_ENABLE_MODEL_CALLS",

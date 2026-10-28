@@ -17,6 +17,8 @@ from api import subscription_store
 from api import webhook_dispatcher
 from api import task_bus
 from api import candidate_store
+from api import trace_store
+from api.trace_parser import parse_traceparent
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
@@ -102,10 +104,33 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
     sys_version = ""
 
     def log_message(self, format_string: str, *args: Any) -> None:
-        # No se registran cuerpos, tokens ni cadenas de consulta.
+        # No se registran cuerpos, tokens, cabeceras de autorización ni query strings.
         raw_client = self.client_address[0]
         client = raw_client.decode("utf-8", "replace") if isinstance(raw_client, bytes) else raw_client
-        print(f"api {client} {self.command} {self.path.split('?', 1)[0]}")
+        safe_path = urlsplit(self.path).path
+        trace_id = getattr(self, "trace_id", None)
+        parsed_parent = parse_traceparent(self.headers.get("traceparent", ""))
+        if not trace_id:
+            trace_id = parsed_parent["trace_id"] if parsed_parent else uuid.uuid4().hex
+        status = None
+        if len(args) > 1:
+            try:
+                status = int(args[1])
+            except (TypeError, ValueError):
+                status = None
+        try:
+            trace_store.record_request(
+                trace_id=trace_id,
+                traceparent=self.headers.get("traceparent") if parsed_parent else None,
+                method=self.command,
+                path=safe_path,
+                status=status,
+                client_ip=client,
+            )
+        except OSError as exc:
+            # Trace storage failure is observable; never print request bodies or secrets.
+            print(f"trace_store_error trace_id={trace_id} error={type(exc).__name__}")
+        print(f"api {client} trace_id={trace_id} {self.command} {safe_path} status={status or '-'}")
 
     def _send_json(self, status: HTTPStatus, payload: Any) -> None:
         encoded = json.dumps(
@@ -119,6 +144,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Trace-Id", getattr(self, "trace_id", ""))
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -134,7 +160,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         import jwt
         auth = self.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
-        secret = os.environ.get("CHALAMANDRA_JWT_SECRET", "")
+        secret_env = (
+            "CHALAMANDRA_CATEDRALX_JWT_SECRET"
+            if required_subject == "catedralx-service"
+            else "CHALAMANDRA_JWT_SECRET"
+        )
+        secret = os.environ.get(secret_env, "")
         if not secret or not token:
             return False
         try:
@@ -150,17 +181,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return False
 
     def _get_trace_id(self) -> str:
-        """Parser estricto W3C Trace Context v00."""
-        import re
-        traceparent = self.headers.get("traceparent", "")
-        # Formato: version(2hex)-trace_id(32hex no-cero)-parent_id(16hex no-cero)-flags(2hex)
-        m = re.match(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent)
-        if m:
-            tid = m.group(1)
-            pid = m.group(2)
-            if tid != "0" * 32 and pid != "0" * 16:
-                return tid
-        return uuid.uuid4().hex
+        """Return the incoming W3C trace ID or generate a new local trace ID."""
+        parsed = parse_traceparent(self.headers.get("traceparent", ""))
+        return parsed["trace_id"] if parsed else uuid.uuid4().hex
 
     def _read_json_body(self) -> dict[str, Any] | None:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -192,6 +215,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         return body
 
     def do_GET(self) -> None:
+        self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
         if path.startswith("/v1/results/"):
             if not self._authorized(require_token=True, required_scope="results:read"):
@@ -204,8 +228,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
                 return
             
-            # FASE 2: Gate de Aceptación Independiente
-            acceptance = acceptance_store.get_acceptance(result_id)
+            # FASE 2: Gate de Aceptación Independiente. Store corruption fails closed.
+            try:
+                acceptance = acceptance_store.get_acceptance(result_id)
+            except (OSError, ValueError):
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "acceptance_store_unavailable"})
+                return
             if not acceptance:
                 self._send_json(HTTPStatus.ACCEPTED, {
                     "status": "pending_verification",
@@ -333,6 +361,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self) -> None:
+        self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
         if not self._authorized(require_token=True):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -350,7 +379,137 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self) -> None:
+        self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
+
+        # Create a persisted subscription; production SSRF policy remains in subscription_store.
+        if path == "/v1/subscriptions":
+            if not self._authorized(require_token=True, required_scope="subscriptions:write"):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            body = self._read_json_body()
+            if body is None:
+                return
+            endpoint_url = body.get("endpoint_url")
+            event_types = body.get("event_types")
+            if (
+                not isinstance(endpoint_url, str)
+                or not endpoint_url.strip()
+                or len(endpoint_url) > 2048
+                or not isinstance(event_types, list)
+                or not event_types
+                or len(event_types) > 8
+                or any(not isinstance(item, str) for item in event_types)
+                or len(set(event_types)) != len(event_types)
+                or any(item not in {"result.accepted", "result.blocked"} for item in event_types)
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "invalid_subscription",
+                    "required_fields": ["endpoint_url", "event_types"],
+                    "allowed_event_types": ["result.accepted", "result.blocked"],
+                })
+                return
+            try:
+                subscription = subscription_store.create_subscription(
+                    endpoint_url=endpoint_url.strip(),
+                    event_types=event_types,
+                )
+            except (ValueError, OSError) as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "subscription_rejected",
+                    "reason": str(exc)[:240],
+                })
+                return
+            self._send_json(HTTPStatus.CREATED, subscription)
+            return
+
+        # Internal distribution is gated by an independently verified acceptance.
+        if path == "/internal/v1/distributions":
+            if not self._authorized(
+                require_token=True,
+                required_scope="results:publish",
+                required_subject="catedralx-service",
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            body = self._read_json_body()
+            if body is None:
+                return
+            result_id = body.get("result_id", body.get("candidate_id"))
+            event_type = body.get("event_type", "result.accepted")
+            if not isinstance(result_id, str) or not result_id.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "result_id_required"})
+                return
+            if event_type != "result.accepted":
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "unsupported_distribution_event",
+                    "allowed_event_type": "result.accepted",
+                })
+                return
+            candidate = candidate_store.get_candidate(result_id)
+            if not candidate:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
+                return
+            try:
+                acceptance = acceptance_store.get_acceptance(result_id)
+            except (OSError, ValueError):
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "error": "acceptance_store_unavailable",
+                })
+                return
+            if not acceptance or acceptance.get("outcome") != "accepted":
+                self._send_json(HTTPStatus.CONFLICT, {
+                    "error": "result_not_independently_accepted",
+                    "delivery_status": "pending_verification",
+                })
+                return
+            trace_id = acceptance.get("trace_id") or candidate.get("trace_id")
+            if not isinstance(trace_id, str) or len(trace_id) != 32:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "accepted_result_trace_id_invalid"})
+                return
+            requested_trace_id = body.get("trace_id")
+            if requested_trace_id is not None and requested_trace_id != trace_id:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "trace_id_mismatch"})
+                return
+            parsed_parent = parse_traceparent(self.headers.get("traceparent", ""))
+            if parsed_parent and parsed_parent["trace_id"] != trace_id:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "traceparent_trace_id_mismatch"})
+                return
+            event_id = body.get("event_id") or str(uuid.uuid4())
+            if not isinstance(event_id, str) or not event_id.strip() or len(event_id) > 128:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_event_id"})
+                return
+            try:
+                delivered_count = webhook_dispatcher.dispatch_event(
+                    event_type="result.accepted",
+                    result_id=result_id,
+                    trace_id=trace_id,
+                    traceparent=self.headers.get("traceparent") if parsed_parent else None,
+                    event_id=event_id,
+                )
+            except (OSError, RuntimeError, ValueError):
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                    "error": "distribution_not_configured_or_unavailable",
+                    "trace_id": trace_id,
+                })
+                return
+            if delivered_count < 1:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {
+                    "error": "no_distribution_delivery_succeeded",
+                    "delivered_count": delivered_count,
+                    "trace_id": trace_id,
+                })
+                return
+            self._send_json(HTTPStatus.ACCEPTED, {
+                "event_id": event_id,
+                "event_type": "result.accepted",
+                "result_id": result_id,
+                "status": "dispatched",
+                "delivered_count": delivered_count,
+                "trace_id": trace_id,
+            })
+            return
+
         if path == "/v1/acceptance":
             if not self._authorized(require_token=True, required_scope="acceptance:write"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -363,6 +522,21 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             try:
                 if "signature" not in body:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing_signature"})
+                    return
+                existing = acceptance_store.get_acceptance(str(body.get("candidate_id") or ""))
+                if existing:
+                    same_decision = (
+                        existing.get("decision_id") == body.get("decision_id")
+                        and existing.get("signature") == body.get("signature")
+                    )
+                    if same_decision:
+                        self._send_json(HTTPStatus.CREATED, {
+                            "decision_id": existing["decision_id"],
+                            "outcome": existing["outcome"],
+                            "idempotent_replay": True,
+                        })
+                    else:
+                        self._send_json(HTTPStatus.CONFLICT, {"error": "acceptance_already_recorded"})
                     return
                 decision_id = acceptance_store.record_acceptance(body)
 
@@ -385,12 +559,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
             return
 
-        if path == "/internal/v1/orchestration/runs":
-            if not self._authorized(
-                require_token=True,
-                required_scope="orchestration:run",
-                required_subject="catedralx-service",
-            ):
+        if path in {"/internal/v1/orchestration/runs", "/v1/request"}:
+            if path == "/v1/request":
+                authorized = self._authorized(
+                    require_token=True,
+                    required_scope="jobs:write",
+                )
+            else:
+                authorized = self._authorized(
+                    require_token=True,
+                    required_scope="orchestration:run",
+                    required_subject="catedralx-service",
+                )
+            if not authorized:
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             body = self._read_json_body()
@@ -433,6 +614,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             idem_key = self.headers.get("Idempotency-Key")
+            if path == "/v1/request" and not idem_key:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "idempotency_key_required"})
+                return
             if idem_key is not None and (
                 not idem_key.strip() or len(idem_key) < 8 or len(idem_key) > 128
                 or "\r" in idem_key or "\n" in idem_key
@@ -442,7 +626,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
 
             run_id = str(uuid.uuid4())
             task_id = str(uuid.uuid4())
-            trace_id = self._get_trace_id()
+            trace_id = self.trace_id
             contract = {
                 "task_id": task_id,
                 "run_id": run_id,
@@ -508,7 +692,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
             
             # Encolar en el TaskBus unificado
-            trace_id = self._get_trace_id()
+            trace_id = self.trace_id
             idem_key = self.headers.get("Idempotency-Key")
             try:
                 task_id = task_bus.enqueue_task(
@@ -661,3 +845,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# NOTE: api.server uses the stdlib EngineHTTPServer, not a FastAPI application.
+# api/distribution.py is an unintegrated draft and must not be included here.

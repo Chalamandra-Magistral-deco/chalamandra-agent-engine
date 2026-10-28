@@ -9,6 +9,7 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from api import subscription_store
+from api.trace_parser import parse_traceparent
 
 def _state_dir() -> Path:
     return Path.home() / ".local" / "state" / "chalamandra" / "agents"
@@ -34,7 +35,29 @@ def _log_dead_letter(url: str, payload: dict, error: str):
     with _dead_letter_file().open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
-def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
+def _child_traceparent(trace_id: str, parent_traceparent: str | None = None) -> str | None:
+    """Build a W3C child span on the accepted result's trace, never inventing a trace ID."""
+    import re
+    import uuid
+    if not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
+        return None
+    parent = parse_traceparent(parent_traceparent)
+    if parent and parent["trace_id"] == trace_id:
+        flags = parent["flags"]
+    else:
+        flags = "01"
+    span_id = uuid.uuid4().hex[:16]
+    return f"00-{trace_id}-{span_id}-{flags}"
+
+
+def dispatch_event(
+    event_type: str,
+    result_id: str,
+    trace_id: str,
+    *,
+    traceparent: str | None = None,
+    event_id: str | None = None,
+) -> int:
     subs = subscription_store.list_subscriptions()
     active_subs = [s for s in subs if s.get("status") == "enabled" and event_type in s.get("event_types", [])]
     if not active_subs:
@@ -42,7 +65,7 @@ def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
 
     import uuid
     payload = {
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id or str(uuid.uuid4()),
         "event_type": event_type,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "result_id": result_id,
@@ -50,7 +73,8 @@ def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
         "result_url": f"/v1/results/{result_id}"
     }
     signature = _sign_payload(payload)
-    data = json.dumps(payload).encode("utf-8")
+    data = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    outbound_traceparent = _child_traceparent(trace_id, traceparent)
     success_count = 0
 
     for sub in active_subs:
@@ -65,7 +89,9 @@ def dispatch_event(event_type: str, result_id: str, trace_id: str) -> int:
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": "Chalamandra-Webhook/1.0",
-                "X-Chalamandra-Signature": signature
+                "X-Chalamandra-Signature": signature,
+                "X-Trace-Id": trace_id,
+                **({"traceparent": outbound_traceparent} if outbound_traceparent else {}),
             },
             method="POST"
         )
