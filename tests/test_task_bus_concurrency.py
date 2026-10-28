@@ -39,3 +39,43 @@ def test_concurrent_task_reservation(isolated_db):
         t.join()
 
     assert len(resultados) == 1, f"esperaba 1 ganador, obtuve {len(resultados)}"
+
+
+
+def test_idempotency_replays_same_task_and_binds_full_contract(isolated_db):
+    contract = {
+        "task_id": "first-task",
+        "run_id": "first-run",
+        "objective": "catedralx_economic_proposal_review",
+        "required_tools": [],
+        "success_criteria": ["candidate includes evidence"],
+        "payload": {"cycle_id": "cycle-1"},
+        "trace_id": "trace-first",
+    }
+    first = task_bus.enqueue_task(contract, idempotency_key="catedralx:cycle-1")
+    replay = task_bus.enqueue_task(
+        {
+            **contract,
+            "task_id": "second-task",
+            "run_id": "second-run",
+            "trace_id": "trace-second",
+        },
+        idempotency_key="catedralx:cycle-1",
+    )
+
+    assert first == replay == "first-task"
+    stored = task_bus.get_task_status(first)
+    assert stored is not None
+    assert stored["run_id"] == "first-run"
+    assert len(task_bus.get_tasks_by_run("first-run")) == 1
+    assert task_bus.get_tasks_by_run("second-run") == []
+
+    with pytest.raises(ValueError, match="contrato distinto"):
+        task_bus.enqueue_task(
+            {
+                **contract,
+                "task_id": "third-task",
+                "objective": "different_objective",
+            },
+            idempotency_key="catedralx:cycle-1",
+        )

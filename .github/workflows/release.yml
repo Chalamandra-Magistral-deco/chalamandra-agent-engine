@@ -76,6 +76,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build pinned canonical CatedralX base image
+        run: docker build --pull --tag catedralx:v1.0-canonico --file deploy/CatedralX.Dockerfile .
+
       - name: Build deployment image (fail closed)
         run: docker build --pull --tag chalamandra-agents:ci --file deploy/Dockerfile .
 

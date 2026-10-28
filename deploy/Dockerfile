@@ -1,4 +1,5 @@
-FROM catedralx:v1.0-canonico AS catedralx
+ARG CATEDRALX_BASE_IMAGE=catedralx:v1.0-canonico
+FROM ${CATEDRALX_BASE_IMAGE} AS catedralx
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     CATEDRALX_PATH=/app/CatedralX \

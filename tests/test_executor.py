@@ -346,3 +346,85 @@ async def test_native_tool_call_with_invalid_arguments_is_not_executed(
     followup_request = master.orchestrator.run.await_args_list[1].args[1]
     assert '"ok": false' in followup_request.messages[-1]["content"]
     assert "Argumentos inválidos" in followup_request.messages[-1]["content"]
+
+
+
+@pytest.mark.asyncio
+async def test_execute_subtask_respects_explicit_empty_tool_allowlist(monkeypatch):
+    from unittest.mock import AsyncMock
+    from core.master import Master
+
+    master = Master()
+    master.orchestrator.run = AsyncMock(return_value=ModelResponse(
+        call_id="allowlist-empty",
+        model="ollama",
+        role=ModelRole.AGENT,
+        output="Análisis sin herramientas",
+        status=ModelStatus.OK,
+    ))
+    subtask = Subtask(
+        id="tool-denied",
+        description="Analizar una propuesta económica sin ejecutar herramientas",
+        skill="analysis",
+        depends_on=[],
+    )
+
+    result = await master.executor.execute_subtask(
+        subtask,
+        {},
+        allowed_tools_override=set(),
+    )
+
+    request = master.orchestrator.run.await_args.args[1]
+    assert request.metadata["allowed_tools"] == []
+    assert request.tools == []
+    assert result.allowed_tools == []
+
+
+@pytest.mark.asyncio
+async def test_executor_enforces_task_allowlist_even_if_model_hallucinates_tool_call():
+    from unittest.mock import AsyncMock
+    from core.master import Master
+
+    master = Master()
+    executed = []
+    async def fake_execute_tool(tool, **kwargs):
+        executed.append(tool)
+        return {"status": "should-not-run"}
+
+    master.execute_tool = fake_execute_tool
+    master.orchestrator.run = AsyncMock(side_effect=[
+        ModelResponse(
+            call_id="forbidden-tool-call",
+            model="ollama",
+            role=ModelRole.AGENT,
+            output="",
+            tool_calls=[{"name": "catedralx_reasoning", "arguments": {
+                "historical_prices": [1.0] * 30, "current_price": 1.0
+            }}],
+            raw={"message": {"role": "assistant", "content": "", "tool_calls": [
+                {"function": {"name": "catedralx_reasoning", "arguments": {
+                    "historical_prices": [1.0] * 30, "current_price": 1.0
+                }}}
+            ]}},
+        ),
+        ModelResponse(
+            call_id="final-after-block",
+            model="ollama",
+            role=ModelRole.AGENT,
+            output="La llamada no autorizada fue rechazada.",
+        ),
+    ])
+    subtask = Subtask(
+        id="hallucinated-tool",
+        description="Revisar una propuesta económica sin herramientas",
+        skill="analysis",
+        depends_on=[],
+    )
+
+    await master.executor.execute_subtask(subtask, {}, allowed_tools_override=set())
+
+    assert executed == []
+    followup = master.orchestrator.run.await_args_list[1].args[1]
+    assert '"ok": false' in followup.messages[-1]["content"]
+    assert "fuera de la allowlist" in followup.messages[-1]["content"]

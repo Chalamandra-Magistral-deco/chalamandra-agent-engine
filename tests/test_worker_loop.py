@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from api import worker_loop
@@ -88,7 +89,7 @@ def test_accepted_without_result_id_is_blocked(monkeypatch):
 
     assert result["status"] == "blocked"
     assert "without" not in result["summary"].lower()
-    assert "sin result_id" in result["summary"]
+    assert "sin DecisionResult canónico válido" in result["summary"]
     assert len(saved_candidates) == 1
     assert len(completion_calls) == 1
     assert completion_calls[0]["result_id"] is None
@@ -101,17 +102,27 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_run(args, *, cwd, env, capture_output, text, timeout):
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
         captured.update(env=env.copy(), cwd=cwd, timeout=timeout)
         snapshot_path = Path(env["CATEDRALX_SNAPSHOT_PATH"])
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        assert snapshot["PERCEIVE"]["source"] == "worker_request"
+        assert snapshot["PERCEIVE"]["source"] == "test_verified_feed"
+        assert snapshot["PERCEIVE"]["observed_at"] == observed_at
+        assert snapshot["PERCEIVE"]["historial_precios"] == prices
 
         output = {
             "status": "ANALYSIS_COMPLETE",
             "decision_result": {
                 "result_id": "canonical-result",
                 "status": "ACCEPTED",
+                "engine": "CatedralX",
+                "decision": "hold",
+                "evidence": [],
+                "assumptions": [],
+                "risks": [],
+                "provenance": [],
+                "trace_id": "trace-canonical",
+                "analysis_only": True,
                 "orders_created": False,
                 "orders_executed": False,
             },
@@ -121,9 +132,13 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
+    prices = [1.10 + index * 0.001 for index in range(30)]
+    observed_at = datetime.now(timezone.utc).isoformat()
     result = worker_loop._run_catedralx({
-        "historical_prices": [1.1, 1.2, 1.3],
-        "current_price": 1.4,
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": observed_at,
+        "source": "test_verified_feed",
     })
 
     assert captured["env"]["CATEDRALX_PYTHON"] == sys.executable
@@ -131,3 +146,242 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
     assert captured["timeout"] == 60
     assert result["status"] == "ACCEPTED"
     assert result["result_id"] == "canonical-result"
+
+
+def test_catedral_repo_is_configurable_and_defaults_to_sibling_checkout(monkeypatch, tmp_path):
+    monkeypatch.setenv("CATEDRALX_PATH", str(tmp_path / "configured-engine"))
+    assert worker_loop._catedral_repo() == (tmp_path / "configured-engine").resolve()
+
+    monkeypatch.delenv("CATEDRALX_PATH", raising=False)
+    expected = Path(worker_loop.__file__).resolve().parents[2] / "CatedralX"
+    assert worker_loop._catedral_repo() == expected.resolve()
+
+
+
+def test_worker_blocks_financial_input_without_observation_metadata(monkeypatch):
+    import subprocess
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("CatedralX must not run without provenance metadata")
+
+    monkeypatch.setattr(subprocess, "run", should_not_run)
+    result = worker_loop._run_catedralx({
+        "historical_prices": [100.0 + i * 0.01 for i in range(30)],
+        "current_price": 100.29,
+    })
+    assert result == {"status": "BLOCKED", "reason": "missing_observed_at"}
+
+
+def test_worker_blocks_stale_observation_before_calling_catedralx(monkeypatch):
+    import subprocess
+    from datetime import timedelta
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("CatedralX must not run on stale inputs")
+
+    monkeypatch.setattr(subprocess, "run", should_not_run)
+    stale_at = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+    result = worker_loop._run_catedralx({
+        "historical_prices": [100.0 + i * 0.01 for i in range(30)],
+        "current_price": 100.29,
+        "observed_at": stale_at,
+        "source": "test_verified_feed",
+    })
+    assert result == {"status": "BLOCKED", "reason": "stale_observation"}
+
+
+def test_general_task_is_blocked_when_model_calls_are_disabled(monkeypatch):
+    saved_candidates = []
+    completion_calls = []
+
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completion_calls.append(
+            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
+        ),
+    )
+
+    def should_not_execute(*args, **kwargs):
+        raise AssertionError("Master must not execute while model calls are disabled")
+
+    monkeypatch.setattr(worker_loop.Master, "execute_task", should_not_execute)
+    result = worker_loop.process_task({
+        "task_id": "model-calls-disabled",
+        "objective": "research competitors",
+        "payload": "{}",
+        "trace_id": "trace-model-calls-disabled",
+    })
+
+    assert result["status"] == "blocked"
+    assert "desactivadas" in result["summary"]
+    assert saved_candidates[0]["status"] == "blocked"
+    assert completion_calls[0]["candidate_result"]["status"] == "blocked"
+
+
+
+def test_general_task_passes_payload_and_success_criteria_to_master(monkeypatch):
+    saved_candidates = []
+    completions = []
+    captured = {}
+
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
+
+    class FakeMaster:
+        def __init__(self):
+            pass
+
+        async def execute_task(self, objective, *, allowed_tools=None):
+            captured["objective"] = objective
+            captured["allowed_tools"] = allowed_tools
+            return {"summary": "Proposal review candidate"}
+
+    monkeypatch.setattr(worker_loop, "Master", FakeMaster)
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completions.append(
+            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
+        ),
+    )
+
+    task = {
+        "task_id": "economic-proposal-test",
+        "objective": "catedralx_economic_proposal_review",
+        "payload": json.dumps({
+            "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
+            "cycle_id": "cycle-test-99",
+            "proposal": {"proposal": "Analyze product demand"},
+            "execution_boundary": {"prohibited": ["ad_spend", "publications"]},
+        }),
+        "success_criteria": json.dumps(["Produce candidate with sources"]),
+        "required_tools": "[]",
+        "trace_id": "trace-economic-proposal-test",
+    }
+
+    result = worker_loop.process_task(task)
+
+    assert result["status"] == "candidate"
+    assert "cycle-test-99" in captured["objective"]
+    assert "Produce candidate with sources" in captured["objective"]
+    assert "ad_spend" in captured["objective"]
+    assert "No publiques" in captured["objective"]
+    assert captured["allowed_tools"] == []
+    assert len(saved_candidates) == 1
+    assert len(completions) == 1
+    assert completions[0]["candidate_result"]["trace_id"] == "trace-economic-proposal-test"
+
+
+
+def _approved_business_proposal_payload(cycle_id="cycle-deterministic-test"):
+    return {
+        "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
+        "cycle_id": cycle_id,
+        "measurement": {
+            "metric": "qualified_leads",
+            "source": "verified_crm_export",
+            "period": "2026-10",
+            "unit": "leads",
+            "formula": "count_unique",
+            "value": 12,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "assessment": {
+            "assessment": "The evidence is insufficient to justify an external campaign.",
+            "evidence": "Verified CRM export is available for review.",
+        },
+        "proposal": {
+            "proposal": "Analyze demand evidence for a product page.",
+            "expected_outcome": "Generate a traceable candidate for independent review.",
+            "verification_plan": "Compare qualified lead counts across approved periods.",
+        },
+        "authorization": {
+            "approved": True,
+            "approver": "business-owner-test",
+            "rationale": "Authorize analysis only; no external actions.",
+        },
+        "execution_boundary": {
+            "allowed": ["analysis", "research", "candidate_generation"],
+            "prohibited": [
+                "publications", "external_contact", "ad_spend",
+                "purchases", "financial_orders", "automatic_reinvestment",
+            ],
+            "independent_acceptance_required": True,
+        },
+    }
+
+
+def test_authorized_business_proposal_runs_without_model_calls(monkeypatch):
+    saved = []
+    completed = []
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setattr(worker_loop.candidate_store, "save_candidate", lambda item: saved.append(item))
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completed.append(
+            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
+        ),
+    )
+
+    def must_not_call_master(*args, **kwargs):
+        raise AssertionError("Authorized economic validation must be deterministic when models are off")
+
+    monkeypatch.setattr(worker_loop.Master, "execute_task", must_not_call_master)
+    payload = _approved_business_proposal_payload()
+    task = {
+        "task_id": "authorized-business-cycle-test",
+        "objective": "catedralx_economic_proposal_review",
+        "payload": json.dumps(payload),
+        "trace_id": "trace-authorized-business-cycle",
+        "success_criteria": json.dumps(["preserve proposal and approval"]),
+        "required_tools": "[]",
+    }
+
+    result = worker_loop.process_task(task)
+
+    assert result["status"] == "candidate"
+    assert result["business_cycle_id"] == payload["cycle_id"]
+    assert result["business_proposal"]["authorization"]["approved"] is True
+    assert result["execution_boundary"]["independent_acceptance_required"] is True
+    assert result["candidate_id"] == result["result_id"]
+    assert result["evidence"][0]["observed_at"] == payload["measurement"]["observed_at"]
+    assert result["evidence"][0]["data_source"] == payload["measurement"]["source"]
+    assert result["orders_created"] is False
+    assert result["orders_executed"] is False
+    assert saved[0]["candidate_id"] == result["candidate_id"]
+    assert completed[0]["result_id"] == result["candidate_id"]
+
+
+def test_authorized_business_proposal_fails_closed_without_approval(monkeypatch):
+    saved = []
+    completed = []
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setattr(worker_loop.candidate_store, "save_candidate", lambda item: saved.append(item))
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completed.append(candidate_result),
+    )
+    payload = _approved_business_proposal_payload()
+    payload["authorization"]["approved"] = False
+
+    result = worker_loop.process_task({
+        "task_id": "unauthorized-business-cycle-test",
+        "objective": "catedralx_economic_proposal_review",
+        "payload": json.dumps(payload),
+        "trace_id": "trace-unauthorized-business-cycle",
+        "success_criteria": "[]",
+        "required_tools": "[]",
+    })
+
+    assert result["status"] == "blocked"
+    assert "human_authorization_missing" in result["summary"]
+    assert result["evidence"] == []
+    assert saved[0]["status"] == "blocked"
+    assert completed[0]["status"] == "blocked"

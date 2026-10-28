@@ -53,48 +53,71 @@ def init_db():
             conn.execute("ALTER TABLE tasks ADD COLUMN result_id TEXT")
 
 def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
+    """Persist a task atomically; an idempotency key binds the complete task contract."""
     init_db()
     task_id = contract.get("task_id") or str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    
-    # P0-2: Idempotencia atómica
-    if idempotency_key:
-        import hashlib
-        payload_hash = hashlib.sha256(json.dumps(contract.get("payload", {}), sort_keys=True).encode()).hexdigest()
-        with _get_conn() as conn:
-            # Intentar insertar en idempotency; si ya existe, devolver el task_id existente
+    stable_contract = {
+        "schema_version": 2,
+        "objective": contract.get("objective"),
+        "required_tools": contract.get("required_tools", []),
+        "success_criteria": contract.get("success_criteria", []),
+        "payload": contract.get("payload", {}),
+    }
+    import hashlib
+    payload_hash = hashlib.sha256(
+        json.dumps(
+            stable_contract,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    # One transaction prevents an idempotency record from being committed without
+    # its corresponding task. Replays return the original task and run, not a new run.
+    with _get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if idempotency_key:
             try:
                 conn.execute(
-                    "INSERT INTO idempotency (idempotency_key, payload_hash, task_id, created_at) VALUES (?, ?, ?, ?)",
-                    (idempotency_key, payload_hash, task_id, now)
+                    "INSERT INTO idempotency "
+                    "(idempotency_key, payload_hash, task_id, created_at) VALUES (?, ?, ?, ?)",
+                    (idempotency_key, payload_hash, task_id, now),
                 )
             except sqlite3.IntegrityError:
-                # La clave ya existe. Verificar que el payload sea el mismo.
                 row = conn.execute(
                     "SELECT task_id, payload_hash FROM idempotency WHERE idempotency_key = ?",
-                    (idempotency_key,)
+                    (idempotency_key,),
                 ).fetchone()
-                if row:
-                    if row["payload_hash"] != payload_hash:
-                        raise ValueError("Idempotency-Key reutilizada con payload distinto")
-                    return row["task_id"]
-                raise
-    
-    with _get_conn() as conn:
+                if not row:
+                    raise
+                if row["payload_hash"] != payload_hash:
+                    raise ValueError("Idempotency-Key reutilizada con un contrato distinto")
+                existing = conn.execute(
+                    "SELECT task_id FROM tasks WHERE task_id = ?", (row["task_id"],)
+                ).fetchone()
+                if not existing:
+                    raise RuntimeError("Registro de idempotencia huérfano; revisión requerida")
+                return str(row["task_id"])
+
         conn.execute(
-            "INSERT INTO tasks (task_id, run_id, objective, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks "
+            "(task_id, run_id, objective, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 contract.get("run_id"),
                 contract.get("objective"),
-                json.dumps(contract.get("required_tools", [])),
-                json.dumps(contract.get("success_criteria", [])),
+                json.dumps(contract.get("required_tools", []), ensure_ascii=False),
+                json.dumps(contract.get("success_criteria", []), ensure_ascii=False),
                 "queued",
                 contract.get("trace_id"),
-                json.dumps(contract.get("payload", {})),
+                json.dumps(contract.get("payload", {}), ensure_ascii=False, allow_nan=False),
                 now,
-                now
-            )
+                now,
+            ),
         )
     return task_id
 
@@ -125,6 +148,21 @@ def mark_task_completed(task_id: str, candidate_result: dict, result_id: str | N
             "UPDATE tasks SET status = ?, candidate_result = ?, result_id = ?, updated_at = ? WHERE task_id = ?",
             (candidate_status, json.dumps(candidate_result), result_id, now, task_id)
         )
+
+def mark_result_accepted(result_id: str) -> int:
+    """Close all task states linked to an independently accepted result."""
+    if not isinstance(result_id, str) or not result_id.strip():
+        raise ValueError("result_id is required")
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE tasks SET status = 'accepted', updated_at = ? "
+            "WHERE result_id = ? AND status = 'candidate'",
+            (now, result_id),
+        )
+        return int(cursor.rowcount)
+
 
 def get_task_status(task_id: str) -> dict | None:
     init_db()

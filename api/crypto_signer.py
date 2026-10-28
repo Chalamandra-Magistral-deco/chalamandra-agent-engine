@@ -28,7 +28,7 @@ def sign_decision(decision_record: Dict[str, Any]) -> str:
     if not NACL_AVAILABLE:
         raise RuntimeError("PyNaCl no está instalado. Ejecuta: pip install pynacl")
     
-    secret_hex = os.getenv("CHALAMANDRA_VERIFIER_SECRET")
+    secret_hex = os.getenv("CHALAMANDRA_ED25519_SEED") or os.getenv("CHALAMANDRA_VERIFIER_SECRET")
     if not secret_hex or len(secret_hex) < 64:
         raise ValueError("CHALAMANDRA_VERIFIER_SECRET debe ser una clave hex de 64 caracteres (32 bytes)")
         

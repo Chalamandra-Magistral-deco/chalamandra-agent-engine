@@ -27,8 +27,14 @@ TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
 TEST_TOKEN = "test-api-token-contract-32-bytes-min"
 
 
-def make_jwt(scopes: str = "jobs:write jobs:read results:read results:write subscriptions:read") -> str:
+def make_jwt(
+    scopes: str = "jobs:write jobs:read results:read results:write subscriptions:read",
+    *,
+    subject: str | None = None,
+) -> str:
     payload = {"scope": scopes, "exp": int(time.time()) + 3600}
+    if subject:
+        payload["sub"] = subject
     return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 
@@ -165,3 +171,137 @@ def test_subscriptions_get_only_requires_read_scope(local_api):
         headers={"Authorization": f"Bearer {make_jwt('subscriptions:read')}"},
     )
     assert status == 200, f"con scope read esperaba 200, obtuve {status}"
+
+
+
+def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(local_api, monkeypatch):
+    from api import task_bus
+
+    port = local_api
+    payload = {
+        "historical_prices": [100.0 + index * 0.01 for index in range(30)],
+        "current_price": 100.29,
+        "observed_at": "2026-10-27T20:00:00+00:00",
+        "source": "test_fixture",
+    }
+    status, created = request(
+        port,
+        "/internal/v1/orchestration/runs",
+        method="POST",
+        payload={"objective": "financial_analysis", "payload": payload},
+        headers={"Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"},
+    )
+    assert status == 202
+    run_id = created["run_id"]
+    tasks = task_bus.get_tasks_by_run(run_id)
+    assert len(tasks) == 1
+    assert json.loads(tasks[0]["payload"]) == payload
+
+    task_bus.mark_task_completed(
+        tasks[0]["task_id"],
+        {"status": "candidate", "candidate_id": "candidate-test"},
+        result_id="candidate-test",
+    )
+    status, run = request(
+        port,
+        f"/internal/v1/orchestration/runs/{run_id}",
+        headers={"Authorization": f"Bearer {make_jwt('results:read')}"},
+    )
+    assert status == 200
+    assert run["status"] == "awaiting_acceptance"
+    assert run["task_statuses"] == ["candidate"]
+
+
+
+def test_orchestration_run_idempotency_preserves_original_run(local_api):
+    from api import task_bus
+
+    port = local_api
+    headers = {
+        "Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}",
+        "Idempotency-Key": "catedralx-economic-cycle-test-1",
+    }
+    payload = {
+        "objective": "catedralx_economic_proposal_review",
+        "payload": {"cycle_id": "cycle-idem-test", "proposal": "test-only"},
+        "permissions": {"allowed_tools": []},
+        "success_criteria": ["Create a traceable candidate"],
+    }
+
+    status_first, first = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST", payload=payload, headers=headers,
+    )
+    status_replay, replay = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST", payload=payload, headers=headers,
+    )
+
+    assert status_first == status_replay == 202
+    assert first["run_id"] == replay["run_id"]
+    assert first["task_id"] == replay["task_id"]
+    assert first["idempotent_replay"] is False
+    assert replay["idempotent_replay"] is True
+    assert len(task_bus.get_tasks_by_run(first["run_id"])) == 1
+
+    changed = {
+        **payload,
+        "payload": {"cycle_id": "cycle-idem-test", "proposal": "changed"},
+    }
+    status_conflict, conflict = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST", payload=changed, headers=headers,
+    )
+    assert status_conflict == 409
+    assert conflict["error"] == "idempotency_conflict"
+
+
+def test_orchestration_run_validates_objective_and_contract_shapes(local_api):
+    port = local_api
+    auth = {"Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"}
+    status, body = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST", payload={"objective": " "}, headers=auth,
+    )
+    assert status == 400
+    assert body["error"] == "invalid_objective"
+
+    status, body = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST",
+        payload={"objective": "valid", "permissions": []},
+        headers=auth,
+    )
+    assert status == 400
+    assert body["error"] == "permissions_must_be_object"
+
+
+
+def test_orchestration_run_requires_catedralx_service_principal(local_api):
+    status, body = request(
+        local_api,
+        "/internal/v1/orchestration/runs",
+        method="POST",
+        payload={"objective": "test"},
+        headers={"Authorization": f"Bearer {make_jwt('orchestration:run')}"},
+    )
+    assert status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_orchestration_run_rejects_unregistered_allowed_tools(local_api):
+    port = local_api
+    auth = {
+        "Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"
+    }
+    status, body = request(
+        port, "/internal/v1/orchestration/runs",
+        method="POST",
+        payload={
+            "objective": "valid",
+            "permissions": {"allowed_tools": ["shell_arbitrary"]},
+        },
+        headers=auth,
+    )
+    assert status == 400
+    assert body["error"] == "unknown_allowed_tools"
