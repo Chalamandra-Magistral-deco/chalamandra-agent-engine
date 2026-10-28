@@ -81,7 +81,7 @@ jobs:
         run: docker build --pull --tag catedralx:v1.0-canonico --file deploy/CatedralX.Dockerfile .
 
       - name: Build deployment image (fail closed)
-        run: docker build --pull --tag chalamandra-agents:ci --file deploy/Dockerfile .
+        run: docker build --tag chalamandra-agents:ci --file deploy/Dockerfile .
 
       - name: Verify bundled CatedralX imports
         run: |
