@@ -22,6 +22,25 @@ MAX_SIMULATION_STEPS = 1_000_000
 
 
 def _as_dict(obj):
+    """
+    Convierte una salida dinámica conocida a un formato serializable cuando es posible.
+
+    Args:
+        obj (Any): Objeto devuelto por el análisis dinámico, un dataclass u otro valor.
+
+    Returns:
+        Any: `None`, un diccionario convertido con `asdict`, el diccionario original o un envoltorio `{"value": obj}` según el tipo de entrada.
+
+    Raises:
+        TypeError: Puede propagar errores de `dataclasses.asdict` para objetos incompatibles.
+
+    Side effects:
+        No realiza simulación ni persistencia; prepara una representación en memoria.
+
+    Example:
+        payload = _as_dict(result)
+    """
+
     if obj is None:
         return None
     if is_dataclass(obj):

@@ -14,19 +14,96 @@ _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _state_dir() -> Path:
+    """
+    Resuelve el directorio persistente local de AGENTS.
+
+    Args:
+        None.
+
+    Returns:
+        Path: Directorio `~/.local/state/chalamandra/agents`.
+
+    Raises:
+        No opera sobre archivos al obtener la ruta.
+
+    Side effects:
+        Ninguno.
+
+    Example:
+        directory = _state_dir()
+    """
+
     return Path.home() / ".local" / "state" / "chalamandra" / "agents"
 
 
 def _events_file() -> Path:
+    """
+    Obtiene la ruta del ledger append-only de eventos de distribución.
+
+    Args:
+        None.
+
+    Returns:
+        Path: Ruta de `distribution_events.jsonl`.
+
+    Raises:
+        No crea ni abre el archivo.
+
+    Side effects:
+        Ninguno.
+
+    Example:
+        path = _events_file()
+    """
+
     return _state_dir() / "distribution_events.jsonl"
 
 
 def _deliveries_file() -> Path:
+    """
+    Obtiene la ruta del ledger de intentos/entregas de distribución.
+
+    Args:
+        None.
+
+    Returns:
+        Path: Ruta de `distribution_deliveries.jsonl` bajo el estado de AGENTS.
+
+    Raises:
+        No crea ni abre el archivo.
+
+    Side effects:
+        Ninguno.
+
+    Example:
+        path = _deliveries_file()
+    """
+
     return _state_dir() / "distribution_deliveries.jsonl"
 
 
 @contextmanager
 def _locked(path: Path) -> Iterator[None]:
+    """
+    Proporciona exclusión mutua para operaciones sobre el almacén de distribución.
+
+    Args:
+        path (Path): Archivo asociado al lock.
+
+    Returns:
+        ContextManager: Contexto de bloqueo para usar con `with`.
+
+    Raises:
+        OSError: Si no puede abrirse/crearse o bloquearse el archivo lock.
+
+    Side effects:
+        Abre un artefacto auxiliar y mantiene el bloqueo durante el contexto.
+
+    Example:
+        with _locked(_events_file()):
+            events = _read_all(_events_file())
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     with lock_path.open("a", encoding="utf-8") as stream:
@@ -38,6 +115,26 @@ def _locked(path: Path) -> Iterator[None]:
 
 
 def _read_all(path: Path) -> list[dict[str, Any]]:
+    """
+    Decodifica los registros del almacén de distribución en orden de persistencia.
+
+    Args:
+        path (Path): Archivo JSONL que se leerá.
+
+    Returns:
+        list[dict]: Registros disponibles, o lista vacía si el archivo no existe.
+
+    Raises:
+        OSError: Si no puede leerse el archivo.
+        ValueError: Si una línea del archivo no es un objeto JSON válido según el contrato del almacén.
+
+    Side effects:
+        Solo lectura; no corrige ni elimina registros históricos defectuosos.
+
+    Example:
+        events = _read_all(_events_file())
+    """
+
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
@@ -56,6 +153,27 @@ def _read_all(path: Path) -> list[dict[str, Any]]:
 
 
 def _append(path: Path, record: dict[str, Any]) -> None:
+    """
+    Añade un registro de evento/entrega al ledger JSONL.
+
+    Args:
+        path (Path): Archivo de destino.
+        record (dict[str, Any]): Registro serializable.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: Si falla la creación/escritura.
+        TypeError: Si el registro no es serializable a JSON.
+
+    Side effects:
+        Anexa una línea; el control de concurrencia corresponde al contexto `_locked` de la capa llamadora.
+
+    Example:
+        _append(_events_file(), event)
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(record, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n"
     with path.open("a", encoding="utf-8") as stream:
@@ -69,6 +187,25 @@ def _append(path: Path, record: dict[str, Any]) -> None:
 
 
 def _now() -> datetime:
+    """
+    Devuelve la hora actual en UTC para marcar eventos de distribución.
+
+    Args:
+        None.
+
+    Returns:
+        datetime: Instante actual con zona horaria UTC.
+
+    Raises:
+        No genera excepciones de dominio deliberadas.
+
+    Side effects:
+        Lee el reloj del sistema; no persiste la marca temporal.
+
+    Example:
+        timestamp = _now().isoformat()
+    """
+
     return datetime.now(timezone.utc)
 
 

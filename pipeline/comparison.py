@@ -12,6 +12,25 @@ from adapters.base import ModelResponse
 
 
 def _normalize(text: str) -> str:
+    """
+    Normaliza el espacio y el uso de mayúsculas para comparar textos.
+
+    Args:
+        text (str): Texto que se desea comparar.
+
+    Returns:
+        str: Texto en minúsculas con espacios consecutivos reducidos a un espacio.
+
+    Raises:
+        AttributeError: Si se entrega un valor que no implementa operaciones de cadena.
+
+    Side effects:
+        Ninguno.
+
+    Example:
+        assert _normalize(" Hola   MUNDO ") == "hola mundo"
+    """
+
     return " ".join(text.lower().split())
 
 

@@ -58,6 +58,27 @@ def _empty_result(
     error: str,
     rationale: str,
 ) -> SynthesisResult:
+    """
+    Construye una respuesta de síntesis explícitamente vacía y con error explicativo.
+
+    Args:
+        strategy (str): Estrategia solicitada.
+        error (str): Código/motivo del resultado vacío.
+        rationale (str): Explicación visible de por qué no se seleccionó una salida.
+
+    Returns:
+        SynthesisResult: Resultado con output vacío, contribuciones vacías y el error documentado.
+
+    Raises:
+        No genera excepciones de dominio para cadenas válidas.
+
+    Side effects:
+        Ninguno; no llama modelos ni persiste el resultado.
+
+    Example:
+        result = _empty_result("vote", "no_valid_responses", "No hubo respuestas exitosas")
+    """
+
     return SynthesisResult(
         output="",
         strategy=strategy,

@@ -13,6 +13,25 @@ _LOCK = threading.Lock()
 
 
 def _trace_file() -> Path:
+    """
+    Resuelve la ruta del archivo JSONL de trazas de solicitudes HTTP.
+
+    Args:
+        None; consulta la ruta configurada y la raíz local de estado.
+
+    Returns:
+        Path: Ruta expandida para el almacenamiento de trazas de API.
+
+    Raises:
+        OSError: Puede propagarse si falla la resolución de la ruta configurada.
+
+    Side effects:
+        Lee configuración/paths; no crea ni lee el archivo por sí sola.
+
+    Example:
+        path = _trace_file()
+    """
+
     configured = os.getenv("CHALAMANDRA_TRACE_LOG_PATH", "").strip()
     if configured:
         return Path(configured).expanduser()

@@ -130,11 +130,50 @@ _PROFILE_BY_NAME = {profile.name: profile for profile in _PROFILES}
 
 
 def _normalize(value: str) -> str:
+    """
+    Normaliza una etiqueta para comparaciones de intención sin depender de acentos.
+
+    Args:
+        value (str): Texto de entrada que se quiere comparar.
+
+    Returns:
+        str: Texto en minúsculas y sin marcas diacríticas, conservando el resto de caracteres.
+
+    Raises:
+        TypeError: Si `value` no permite la normalización textual esperada.
+
+    Side effects:
+        Ninguno; transforma una cadena en memoria.
+
+    Example:
+        assert _normalize("Análisis") == _normalize("analisis")
+    """
+
     value = unicodedata.normalize("NFKD", str(value).casefold())
     return "".join(char for char in value if not unicodedata.combining(char))
 
 
 def _contains(text: str, terms: tuple[str, ...]) -> bool:
+    """
+    Comprueba si alguno de los términos aparece como palabra delimitada en el texto.
+
+    Args:
+        text (str): Texto ya normalizado o texto que se desea examinar.
+        terms (tuple[str, ...]): Términos candidatos para coincidencia literal, sin regex aportado por el usuario.
+
+    Returns:
+        bool: `True` si al menos un término coincide respetando los límites de palabra.
+
+    Raises:
+        re.error: Solo si se introduce internamente un patrón inválido; los términos se escapan antes de formar el patrón.
+
+    Side effects:
+        Ninguno; no cambia el texto ni consulta red.
+
+    Example:
+        found = _contains("analiza finanzas", ("finanzas", "ventas"))
+    """
+
     return any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text) for term in terms)
 
 

@@ -196,9 +196,47 @@ class ModelAdapter(ABC):
     # -----------------------------------------------------------------------
 
     def _now_ms(self) -> int:
+        """
+        Devuelve el reloj de pared actual expresado en milisegundos.
+
+        Args:
+            None.
+
+        Returns:
+            int: Segundos UNIX convertidos a milisegundos enteros.
+
+        Raises:
+            No genera excepciones deliberadas.
+
+        Side effects:
+            Consulta el reloj del sistema; el valor no es un reloj monotónico.
+
+        Example:
+            started = adapter._now_ms()
+        """
+
         return int(time.time() * 1000)
 
     def _elapsed_ms(self, start_ms: int) -> int:
+        """
+        Calcula el tiempo transcurrido con la convención de milisegundos del adapter.
+
+        Args:
+            start_ms (int): Marca inicial producida por `_now_ms`.
+
+        Returns:
+            int: Diferencia entre la hora actual y la marca inicial en milisegundos.
+
+        Raises:
+            TypeError: Si `start_ms` no es compatible con una operación numérica.
+
+        Side effects:
+            Consulta el reloj del sistema; puede dar resultados afectados por ajustes de hora.
+
+        Example:
+            elapsed = adapter._elapsed_ms(start_ms)
+        """
+
         return self._now_ms() - start_ms
 
     def _error_response(
@@ -208,6 +246,28 @@ class ModelAdapter(ABC):
         error: str,
         start_ms: int,
     ) -> ModelResponse:
+        """
+        Construye una respuesta canónica para una llamada a modelo que falló.
+
+        Args:
+            request (ModelRequest): Solicitud original cuyo ID y rol deben preservarse.
+            status (ModelStatus): Estado de error/timeout/rechazo a registrar.
+            error (str): Motivo resumido del fallo.
+            start_ms (int): Marca inicial para calcular latencia.
+
+        Returns:
+            ModelResponse: Salida vacía con identidad del modelo, error, estado y latencia real aproximada.
+
+        Raises:
+            Puede propagar errores de validación del modelo Pydantic si los campos proporcionados no cumplen el contrato.
+
+        Side effects:
+            Solo crea un objeto en memoria; no escribe trazas. El orquestador registra la respuesta cuando se completa la llamada.
+
+        Example:
+            response = adapter._error_response(request, ModelStatus.ERROR, "provider failed", start_ms)
+        """
+
         return ModelResponse(
             call_id=request.call_id,
             model=self.name,

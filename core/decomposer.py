@@ -80,6 +80,26 @@ TAREA: __TASK__
 
 
 def _extract_json(text: str) -> dict:
+    """
+    Extrae y decodifica el bloque JSON de una respuesta de planificación.
+
+    Args:
+        text (str): Respuesta textual del modelo; puede contener formato Markdown alrededor del JSON.
+
+    Returns:
+        Any: Objeto o lista decodificados por `json.loads`; el tipo final depende del JSON de entrada.
+
+    Raises:
+        ValueError: Si no se encuentra un bloque JSON delimitado reconocible.
+        json.JSONDecodeError: Si el bloque extraído no es JSON válido.
+
+    Side effects:
+        Ninguno; no ejecuta herramientas ni vuelve a llamar al modelo.
+
+    Example:
+        plan = _extract_json('{"subtasks": []}')
+    """
+
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError("Sin JSON en respuesta")
@@ -248,6 +268,25 @@ class Decomposer:
         return subtasks
 
     def _fallback(self, task: str) -> list[Subtask]:
+        """
+        Construye una subtarea conservadora cuando falla la descomposición.
+
+        Args:
+            task (str): Instrucción original que debe preservarse sin reinterpretarla.
+
+        Returns:
+            list[Subtask]: Una subtarea de fallback con ID local, skill de razonamiento y la tarea original.
+
+        Raises:
+            No genera excepciones deliberadas; errores de construcción del objeto pueden propagarse.
+
+        Side effects:
+            Genera un identificador aleatorio en memoria; no persiste ni ejecuta la tarea.
+
+        Example:
+            fallback = decomposer._fallback("Resume el texto")
+        """
+
         return [Subtask(
             id=str(uuid.uuid4())[:8],
             description=task,

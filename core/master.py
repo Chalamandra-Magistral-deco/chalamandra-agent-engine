@@ -63,6 +63,26 @@ class Master:
         self._register_core_tools()
 
     def _register_core_tools(self) -> None:
+        """
+        Registra las herramientas de dominio integradas en el ToolRegistry del motor.
+
+        Args:
+            None aparte de la instancia `self`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si una herramienta con el mismo nombre ya está registrada.
+            ImportError: Si no se puede importar un handler integrado requerido.
+
+        Side effects:
+            Modifica el registro de herramientas de la instancia; no ejecuta ningún handler ni publica nada.
+
+        Example:
+            master = Master()  # La inicialización registra las herramientas integradas
+        """
+
         self.tools.register(
             name="dynamics",
             description="Analiza y simula sistemas dinámicos con retardo.",
@@ -301,6 +321,25 @@ class Master:
 
     @staticmethod
     def _json_schema_type(annotation: Any) -> dict[str, Any]:
+        """
+        Mapea una anotación Python a un tipo básico de JSON Schema.
+
+        Args:
+            annotation (Any): Anotación de tipo que se inspeccionará, incluidos tipos opcionales o contenedores reconocidos.
+
+        Returns:
+            dict[str, Any]: Fragmento JSON Schema que representa el tipo inferido; para tipos desconocidos usa el esquema genérico definido por el método.
+
+        Raises:
+            No genera excepciones de dominio; puede propagar errores de introspección en anotaciones inusuales.
+
+        Side effects:
+            Ninguno; no ejecuta el handler ni valida un payload real.
+
+        Example:
+            schema = Master._json_schema_type(str)
+        """
+
         origin = get_origin(annotation)
         args = get_args(annotation)
         if origin in (list, tuple, set, Sequence):

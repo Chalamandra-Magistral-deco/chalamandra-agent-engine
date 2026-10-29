@@ -30,6 +30,25 @@ _MIN_PRICE_POINTS = 30
 
 
 def _resolve_root() -> Path:
+    """
+    Resuelve y comprueba la raíz del checkout de CatedralX.
+
+    Args:
+        None; consulta `CATEDRALX_PATH` o la ruta canónica relativa al repositorio.
+
+    Returns:
+        Path: Ruta absoluta del checkout que contiene la interfaz esperada de CatedralX.
+
+    Raises:
+        FileNotFoundError: Si no se encuentra una raíz configurada válida o falta `elite/REASON/orchestrator.py`.
+
+    Side effects:
+        Lee configuración de entorno y consulta el filesystem; no ejecuta CatedralX.
+
+    Example:
+        root = _resolve_root()
+    """
+
     configured = os.getenv("CATEDRALX_PATH")
     candidate = (
         Path(configured).expanduser()
@@ -51,6 +70,25 @@ def _resolve_root() -> Path:
 
 
 def _resolve_state_path() -> Path:
+    """
+    Determina la ruta del estado local utilizado por el adaptador de CatedralX.
+
+    Args:
+        None; consulta la configuración de ruta implementada por el módulo.
+
+    Returns:
+        Path: Ruta normalizada/resuelta donde el adaptador mantiene el estado permitido.
+
+    Raises:
+        OSError: Puede propagarse si la resolución de ruta del sistema falla.
+
+    Side effects:
+        Consulta configuración local y normaliza la ruta; no escribe registros por sí sola.
+
+    Example:
+        state_path = _resolve_state_path()
+    """
+
     configured = os.getenv("CATEDRALX_STATE_PATH")
     candidate = (
         Path(configured).expanduser()
@@ -61,6 +99,29 @@ def _resolve_state_path() -> Path:
 
 
 def _load_catedralx_module(root: Path) -> Any:
+    """
+    Carga la implementación canónica de CatedralX desde el checkout validado.
+
+    Args:
+        root (Path): Raíz de CatedralX que debe coincidir con la procedencia del módulo importado.
+
+    Returns:
+        Any: Módulo de orquestación cargado y cacheado, cuando está disponible.
+
+    Raises:
+        RuntimeError: Si ya hay un paquete `REASON` cargado desde otra raíz o no se puede importar la interfaz requerida.
+        ImportError: Puede quedar encadenado como causa de un error de carga.
+
+    Side effects:
+        Modifica `sys.path`/`sys.modules` y mantiene el módulo en caché para el proceso; no cambia archivos de CatedralX.
+
+    Security:
+        No debe cargar un checkout alterno silenciosamente, ya que mezclar motores cambia la procedencia de las decisiones.
+
+    Example:
+        module = _load_catedralx_module(_resolve_root())
+    """
+
     global _ENGINE_MODULE, _ENGINE_ROOT
 
     if _ENGINE_MODULE is not None:
@@ -115,6 +176,26 @@ def _load_catedralx_module(root: Path) -> Any:
 
 
 def _prepare_engine(module: Any, state_path: Path) -> None:
+    """
+    Construye o configura el adaptador de la interfaz de razonamiento de CatedralX.
+
+    Args:
+        module (Any): Módulo ya cargado desde la raíz validada de CatedralX.
+        state_path (Path): Ubicación de estado que el contrato del motor debe usar.
+
+    Returns:
+        None: La preparación deja la interfaz configurada para las llamadas posteriores.
+
+    Raises:
+        RuntimeError: Si el módulo cargado no presenta la interfaz canónica esperada.
+
+    Side effects:
+        Puede crear o configurar componentes en memoria y rutas locales; no equivale a ejecutar una decisión financiera.
+
+    Example:
+        _prepare_engine(module, state_path)
+    """
+
     global _ENGINE_STATE_PATH
 
     if _ENGINE_STATE_PATH == state_path:
@@ -132,6 +213,26 @@ def _prepare_engine(module: Any, state_path: Path) -> None:
 
 
 def _finite_number(name: str, value: Any) -> float:
+    """
+    Valida y convierte una entrada a número real finito.
+
+    Args:
+        name (str): Nombre del campo que se usará en el mensaje de error.
+        value (Any): Valor numérico propuesto.
+
+    Returns:
+        float: Valor convertido después de comprobar finitud.
+
+    Raises:
+        ValueError: Si no se puede convertir a número o resulta NaN/infinito.
+
+    Side effects:
+        Ninguno; no modifica el valor original.
+
+    Example:
+        current = _finite_number("current_price", 12.5)
+    """
+
     if isinstance(value, bool):
         raise ValueError(f"{name} debe ser numérico y finito.")
     try:
@@ -147,6 +248,26 @@ def _prices_with_current(
     historical_prices: Sequence[float] | None,
     current_price: float | None,
 ) -> tuple[list[float], float]:
+    """
+    Valida los precios explícitos y prepara la serie de entrada de CatedralX.
+
+    Args:
+        historical_prices (Sequence[float] | None): Precios históricos en orden de uso; se requieren suficientes observaciones según el contrato del motor.
+        current_price (float | None): Precio actual opcional para completar la serie, cuando así lo permite el contrato.
+
+    Returns:
+        tuple[list[float], float]: Lista de precios validada y precio actual validado.
+
+    Raises:
+        ValueError: Si no hay datos suficientes, la secuencia no es válida, o hay precios no finitos o menores/iguales a cero.
+
+    Side effects:
+        Construye una serie nueva en memoria; no consulta mercado ni modifica datos de origen.
+
+    Example:
+        prices, current = _prices_with_current([10.0, 10.5, 11.0], 11.2)
+    """
+
     if historical_prices is None or isinstance(historical_prices, (str, bytes)):
         raise ValueError("historical_prices es obligatorio y debe ser una lista de precios.")
 

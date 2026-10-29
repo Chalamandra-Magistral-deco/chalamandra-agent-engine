@@ -54,6 +54,25 @@ MAX_FIELD_CHARS = 500
 
 
 def _leads_path() -> Path:
+    """
+    Resuelve el archivo JSONL de salida para leads clasificados.
+
+    Args:
+        None; consulta la variable de ruta configurada, si existe.
+
+    Returns:
+        Path: Ruta de salida configurada o la ruta de estado por defecto bajo el home del usuario.
+
+    Raises:
+        OSError: Puede propagarse al resolver una ruta del sistema inválida.
+
+    Side effects:
+        Consulta configuración de entorno; no crea ni escribe el archivo hasta el guardado.
+
+    Example:
+        path = _leads_path()
+    """
+
     configured = os.getenv("CHALAMANDRA_LEADS_PATH")
     if configured:
         return Path(configured).expanduser()
@@ -61,10 +80,48 @@ def _leads_path() -> Path:
 
 
 def _norm(text: str) -> str:
+    """
+    Normaliza texto para coincidencias léxicas del clasificador.
+
+    Args:
+        text (str): Cadena a normalizar.
+
+    Returns:
+        str: Representación en minúsculas mediante `casefold`.
+
+    Raises:
+        AttributeError: Si `text` no ofrece `casefold`.
+
+    Side effects:
+        Ninguno.
+
+    Example:
+        normalized = _norm("URGENTE")
+    """
+
     return text.casefold()
 
 
 def _validate_email(email: str) -> str:
+    """
+    Comprueba el formato básico admitido para un correo de contacto.
+
+    Args:
+        email (str): Dirección de correo que se validará.
+
+    Returns:
+        str: La dirección original si pasa la validación.
+
+    Raises:
+        ValueError: Si la dirección no cumple el patrón/contrato aceptado.
+
+    Side effects:
+        Ninguno; no envía correo ni verifica la existencia del buzón.
+
+    Example:
+        clean_email = _validate_email("contacto@example.com")
+    """
+
     email = (email or "").strip()
     if not email or len(email) > 200:
         raise ValueError("email inválido")
@@ -74,6 +131,28 @@ def _validate_email(email: str) -> str:
 
 
 def _clean_field(name: str, value: Any, *, required: bool, max_len: int = MAX_FIELD_CHARS) -> str:
+    """
+    Valida, normaliza y limita la longitud de un campo de lead.
+
+    Args:
+        name (str): Nombre lógico del campo, usado en errores.
+        value (Any): Valor de entrada que se convertirá a texto según el contrato.
+        required (bool): Si `True`, rechaza valores vacíos.
+        max_len (int): Máximo de caracteres aceptado; por defecto `MAX_FIELD_CHARS`.
+
+    Returns:
+        str: Campo limpio listo para clasificación y persistencia.
+
+    Raises:
+        ValueError: Si el campo obligatorio está vacío o excede el máximo permitido.
+
+    Side effects:
+        Ninguno; no persiste el lead.
+
+    Example:
+        name = _clean_field("name", " Ana ", required=True)
+    """
+
     if value is None:
         value = ""
     if not isinstance(value, str):
@@ -87,6 +166,25 @@ def _clean_field(name: str, value: Any, *, required: bool, max_len: int = MAX_FI
 
 
 def _detect_urgency(text: str) -> tuple[str, list[str]]:
+    """
+    Clasifica la urgencia a partir de señales textuales deterministas.
+
+    Args:
+        text (str): Mensaje de lead que se analizará.
+
+    Returns:
+        tuple[str, list[str]]: Nivel (`alta`, `media` o `baja`) y señales/keywords que justifican la clasificación.
+
+    Raises:
+        No genera excepciones de dominio para texto válido; fallos de tipo pueden propagarse.
+
+    Side effects:
+        Ninguno; no contacta al lead.
+
+    Example:
+        urgency, signals = _detect_urgency("Lo necesito urgente hoy")
+    """
+
     text_norm = _norm(text)
     senales = []
     for kw in URGENCIA_ALTA:
@@ -103,6 +201,26 @@ def _detect_urgency(text: str) -> tuple[str, list[str]]:
 
 
 def _detect_propuesta(message: str, tipo: str) -> tuple[str, float, list[str]]:
+    """
+    Deriva una etiqueta de propuesta y una confianza heurística de las señales del lead.
+
+    Args:
+        message (str): Mensaje original.
+        tipo (str): Tipo de solicitud ya normalizado, si se detectó uno.
+
+    Returns:
+        tuple[str, float, list[str]]: Categoría propuesta, confianza heurística y señales explicativas; la confianza no está calibrada como probabilidad.
+
+    Raises:
+        No genera excepciones de dominio para cadenas válidas.
+
+    Side effects:
+        Ninguno; no inicia una venta ni contacta al usuario.
+
+    Example:
+        proposal, confidence, signals = _detect_propuesta("Quiero una cotización", "cotizacion")
+    """
+
     base = PROPUESTA_POR_TIPO.get(tipo, "Revisar manualmente")
     base_conf = 0.6 if tipo and tipo != "otro" else 0.0
 
@@ -126,6 +244,26 @@ def _detect_propuesta(message: str, tipo: str) -> tuple[str, float, list[str]]:
 
 
 def _append_lead(record: dict[str, Any]) -> Path:
+    """
+    Añade un registro de lead al archivo JSONL local configurado.
+
+    Args:
+        record (dict[str, Any]): Lead ya validado y clasificado que se debe persistir.
+
+    Returns:
+        Path: Ruta del archivo donde se añadió el registro.
+
+    Raises:
+        OSError: Si no puede crearse el directorio o escribirse el archivo.
+        TypeError: Si el registro no se puede serializar a JSON.
+
+    Side effects:
+        Escribe una nueva línea en almacenamiento local; no envía correo, mensaje ni solicitud externa.
+
+    Example:
+        path = _append_lead({"lead_id": "local-example", "status": "classified"})
+    """
+
     path = _leads_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:

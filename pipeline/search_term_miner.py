@@ -72,6 +72,29 @@ def _find_column(
     explicit: str | None = None,
     required: bool = True,
 ) -> str | None:
+    """
+    Resuelve la columna de entrada que corresponde a un campo lógico del CSV.
+
+    Args:
+        headers (Sequence[str]): Encabezados detectados en el archivo.
+        aliases (tuple[str, ...]): Nombres/alias conocidos de la columna.
+        label (str): Nombre lógico que se incluye en mensajes de error.
+        explicit (str | None): Nombre de columna indicado explícitamente por configuración.
+        required (bool): Si `True`, exige una columna correspondiente.
+
+    Returns:
+        str | None: Encabezado real seleccionado, o `None` solo cuando el campo es opcional y no existe coincidencia.
+
+    Raises:
+        ValueError: Si falta una columna requerida o la configuración explícita no coincide con los encabezados.
+
+    Side effects:
+        Ninguno; solo inspecciona los nombres de columnas.
+
+    Example:
+        column = _find_column(["Search term", "Clicks"], ("search term", "query"), label="término")
+    """
+
     normalized = {_norm(header): header for header in headers}
 
     if explicit:
@@ -164,6 +187,25 @@ def _parse_number(value: Any, *, row_number: int, column: str) -> float:
 
 
 def _allowed_root() -> Path:
+    """
+    Resuelve el directorio raíz autorizado para lecturas del miner.
+
+    Args:
+        None; consulta la configuración local del directorio permitido.
+
+    Returns:
+        Path: Ruta canónica resuelta para restringir la lectura de archivos.
+
+    Raises:
+        OSError: Puede propagarse si el filesystem no permite resolver la ruta.
+
+    Security:
+        Esta raíz sirve como límite de acceso a CSV; no debe sustituirse por el directorio de trabajo sin autorización.
+
+    Example:
+        root = _allowed_root()
+    """
+
     configured = os.getenv("CHALAMANDRA_SEARCH_TERMS_DIR")
     raw = (
         Path(configured).expanduser()
@@ -174,6 +216,26 @@ def _allowed_root() -> Path:
 
 
 def _resolve_csv(csv_path: str) -> Path:
+    """
+    Resuelve un CSV y asegura que se encuentre dentro de la raíz permitida.
+
+    Args:
+        csv_path (str): Ruta de archivo solicitada por la tarea.
+
+    Returns:
+        Path: Ruta absoluta del CSV regular que pasó las comprobaciones de contención.
+
+    Raises:
+        ValueError: Si la ruta no es un archivo regular o queda fuera del directorio autorizado.
+        OSError: Puede propagarse si no se puede consultar el filesystem.
+
+    Security:
+        Comprueba la contención de ruta después de resolverla, para impedir lecturas arbitrarias fuera del área autorizada.
+
+    Example:
+        path = _resolve_csv("reports/search_terms.csv")
+    """
+
     root = _allowed_root()
     requested = Path(csv_path).expanduser()
     candidate = requested if requested.is_absolute() else root / requested

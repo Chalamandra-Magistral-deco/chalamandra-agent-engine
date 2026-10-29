@@ -7,6 +7,26 @@ from typing import Iterable
 
 
 def _filter(records: Iterable[dict], model: str | None = None) -> list[dict]:
+    """
+    Materializa registros y aplica un filtro opcional por modelo.
+
+    Args:
+        records (Iterable[dict]): Registros que se quieren consultar.
+        model (str | None): Nombre del modelo requerido; `None` conserva todos.
+
+    Returns:
+        list[dict]: Nueva lista de registros que satisface el filtro.
+
+    Raises:
+        Puede propagar errores del iterador de entrada.
+
+    Side effects:
+        Consume el iterable una sola vez y materializa sus elementos en memoria; no cambia los diccionarios.
+
+    Example:
+        selected = _filter(tracer.iter_records(), model="ollama")
+    """
+
     recs = list(records)
     if model is not None:
         recs = [r for r in recs if r.get("model") == model]

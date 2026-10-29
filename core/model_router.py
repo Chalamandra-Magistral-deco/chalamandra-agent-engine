@@ -40,6 +40,25 @@ class ModelRouter:
 
     @staticmethod
     def _skill_name(skill: str | Skill) -> str:
+        """
+        Convierte el nombre o la enumeración de una skill a una cadena canónica.
+
+        Args:
+            skill (str | Skill): Skill declarada como texto o enumeración.
+
+        Returns:
+            str: `skill.value` para un `Skill`; en otro caso, el texto recibido.
+
+        Raises:
+            No genera excepciones deliberadas para `str` o `Skill` válidos.
+
+        Side effects:
+            Ninguno.
+
+        Example:
+            name = ModelRouter._skill_name(Skill.ANALYSIS)
+        """
+
         return skill.value if isinstance(skill, Skill) else skill
 
     def verified(self, skill: str | Skill) -> list[str]:
