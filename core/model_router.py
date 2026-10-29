@@ -16,6 +16,26 @@ class ModelRouter:
     """
 
     def __init__(self, orchestrator: Orchestrator) -> None:
+        """
+        Asocia el router de modelos con el orquestador de capacidades activo.
+
+        Args:
+            orchestrator (Orchestrator): Registro/orquestador usado para consultar modelos,
+                skills verificadas y estado de los adapters.
+
+        Returns:
+            None.
+
+        Raises:
+            No genera excepciones deliberadas; un valor incompatible fallará cuando se consulte.
+
+        Side effects:
+            Conserva una referencia al orquestador; no invoca modelos ni hace solicitudes de red.
+
+        Example:
+            router = ModelRouter(orchestrator)
+        """
+
         self.orchestrator = orchestrator
 
     @staticmethod

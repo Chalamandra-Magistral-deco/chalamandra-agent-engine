@@ -18,6 +18,26 @@ class Tracer:
     """Registra cada ModelResponse en un archivo JSONL."""
 
     def __init__(self, path: str | Path = DEFAULT_PATH) -> None:
+        """
+        Configura el destino del archivo JSONL y crea el directorio padre.
+
+        Args:
+            path (str | Path): Ruta del archivo de trazas; por defecto `logs/traces.jsonl`.
+
+        Returns:
+            None.
+
+        Raises:
+            OSError: Si no se puede crear el directorio padre.
+
+        Side effects:
+            Crea directorios locales, pero no crea ni trunca el archivo de trazas hasta llamar
+            `record`. La escritura del archivo usa permisos restrictivos.
+
+        Example:
+            tracer = Tracer(Path.home() / ".local/state/chalamandra/agents/traces.jsonl")
+        """
+
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 

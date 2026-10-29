@@ -32,6 +32,27 @@ class DeepSeekAdapter(ModelAdapter):
         api_key: str | None = None,
         model: str | None = None,
     ):
+        """
+        Configura la clave y el nombre de modelo para DeepSeek.
+
+        Args:
+            api_key (str | None): Clave explícita; si se omite, lee `DEEPSEEK_API_KEY`.
+            model (str | None): Modelo explícito; si se omite, lee `DEEPSEEK_MODEL` o `default_version`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si no se dispone de una clave de API.
+
+        Security:
+            No incluir la clave en logs ni en datos de telemetría. La inicialización no hace
+            llamadas de red.
+
+        Example:
+            adapter = DeepSeekAdapter(api_key=secret_from_vault)
+        """
+
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "")
         self.model = model or os.getenv(
             "DEEPSEEK_MODEL",

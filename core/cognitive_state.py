@@ -56,6 +56,29 @@ class CognitiveState:
 class CognitiveController:
     """Deriva controles cognitivos sin ejecutar acciones ni alterar capital."""
     def __init__(self, *, base_learning_rate: float = 0.1, epsilon: float = 1e-9) -> None:
+        """
+        Configura la tasa de aprendizaje y la tolerancia numérica del controlador.
+
+        Args:
+            base_learning_rate (float): Tasa base que debe pasar la validación de unidad
+                implementada por `_unit`.
+            epsilon (float): Tolerancia estrictamente positiva y finita para operaciones
+                numéricas sensibles; por defecto `1e-9`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si `base_learning_rate` incumple `_unit` o si `epsilon` no es
+            finito o es menor o igual que cero.
+
+        Side effects:
+            Guarda parámetros normalizados en la instancia; no persiste estado.
+
+        Example:
+            controller = CognitiveController(base_learning_rate=0.1, epsilon=1e-9)
+        """
+
         self.base_learning_rate = _unit("base_learning_rate", base_learning_rate)
         if not math.isfinite(epsilon) or epsilon <= 0:
             raise ValueError("epsilon debe ser positivo y finito")

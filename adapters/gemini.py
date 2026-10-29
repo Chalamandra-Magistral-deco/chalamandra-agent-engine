@@ -27,6 +27,27 @@ class GeminiAdapter(ModelAdapter):
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
+        """
+        Configura la credencial y modelo de Google Gemini.
+
+        Args:
+            api_key (str | None): Clave explícita; si se omite, lee `GEMINI_API_KEY`.
+            model (str | None): Modelo explícito; si se omite, lee `GEMINI_MODEL` o `default_version`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si no se dispone de una clave de API.
+
+        Security:
+            Mantener la clave fuera de código y documentación operativa. La instancia no
+            valida conectividad hasta que se llama a `generate`.
+
+        Example:
+            adapter = GeminiAdapter(api_key=secret_from_vault)
+        """
+
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = model or os.getenv("GEMINI_MODEL") or self.default_version
         if not self.api_key:

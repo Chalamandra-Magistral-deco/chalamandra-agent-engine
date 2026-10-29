@@ -32,6 +32,27 @@ class ClaudeAdapter(ModelAdapter):
         api_key: str | None = None,
         model: str | None = None,
     ):
+        """
+        Configura la clave y el identificador del modelo Anthropic.
+
+        Args:
+            api_key (str | None): Clave explícita; si se omite, lee `ANTHROPIC_API_KEY`.
+            model (str | None): Modelo explícito; si se omite, lee `CLAUDE_MODEL` o usa `default_version`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si no se dispone de una clave de API.
+
+        Security:
+            La clave permanece en la instancia del adapter y no debe registrarse en logs.
+            Inicializar el adapter no demuestra conectividad ni realiza una llamada facturable.
+
+        Example:
+            adapter = ClaudeAdapter(api_key=secret_from_vault)
+        """
+
         self.api_key: str = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
         self.model = model or os.getenv(
             "CLAUDE_MODEL",

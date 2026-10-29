@@ -23,6 +23,26 @@ class SkillRouter:
         orchestrator: Orchestrator,
         tools: ToolRegistry,
     ) -> None:
+        """
+        Asocia un catálogo de capacidades de modelo y un registro de herramientas.
+
+        Args:
+            orchestrator (Orchestrator): Fuente de modelos activos y skills verificadas.
+            tools (ToolRegistry): Registro de herramientas disponibles por skill.
+
+        Returns:
+            None.
+
+        Raises:
+            No genera excepciones deliberadas; los objetos incompatibles fallarán al consultar.
+
+        Side effects:
+            Conserva referencias a ambos componentes; no ejecuta modelos ni herramientas.
+
+        Example:
+            router = SkillRouter(orchestrator, tool_registry)
+        """
+
         self.orchestrator = orchestrator
         self.tools = tools
 

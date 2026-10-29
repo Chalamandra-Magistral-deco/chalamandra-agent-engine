@@ -39,6 +39,29 @@ class OllamaAdapter(ModelAdapter):
         base_url: str | None = None,
         model: str | None = None,
     ):
+        """
+        Configura la dirección del servidor Ollama y el modelo local.
+
+        Args:
+            base_url (str | None): URL base HTTP; si se omite, lee `OLLAMA_BASE_URL` o usa
+                `http://127.0.0.1:11434`. Se eliminan barras finales.
+            model (str | None): Modelo explícito; si se omite, lee `OLLAMA_MODEL` o `default_version`.
+
+        Returns:
+            None.
+
+        Raises:
+            No hace validación de red en la construcción; valores de URL incorrectos se
+            manifestarán al llamar `generate`.
+
+        Side effects:
+            Guarda configuración en memoria. No requiere clave de proveedor y no prueba que
+            Ollama esté ejecutándose.
+
+        Example:
+            adapter = OllamaAdapter(base_url="http://127.0.0.1:11434", model="qwen2.5:3b")
+        """
+
         self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL") or self.DEFAULT_BASE_URL).rstrip(
             "/"
         )

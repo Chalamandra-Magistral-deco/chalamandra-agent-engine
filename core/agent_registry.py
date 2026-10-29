@@ -142,6 +142,24 @@ class AgentRegistry:
     """Registro de perfiles con selección determinista basada en tarea y skill."""
 
     def __init__(self) -> None:
+        """
+        Inicializa el registro de perfiles a partir de las definiciones canónicas del módulo.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Side effects:
+            Copia el mapa de perfiles a memoria para que la instancia no modifique el
+            diccionario global de definiciones. No consulta red ni ejecuta agentes.
+
+        Example:
+            registry = AgentRegistry()
+            print(registry.available())
+        """
+
         self._profiles = dict(_PROFILE_BY_NAME)
 
     def get(self, name: str) -> AgentProfile:

@@ -79,6 +79,31 @@ class Orchestrator:
     """
 
     def __init__(self, tracer: Tracer | None = None) -> None:
+        """
+        Inicializa adapters activos, estado de credenciales y el tracer de respuestas.
+
+        Args:
+            tracer (Tracer | None): Almacén de telemetría inyectado; si es `None`, se construye
+                el tracer por defecto para registrar respuestas del modelo.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Puede propagarse si la configuración de un secreto/adaptador contiene
+            un valor no válido; los proveedores sin credencial se omiten.
+            OSError: Puede propagarse si falla la configuración/creación del almacén de trazas.
+
+        Side effects:
+            Registra el adapter local Ollama y agrega adaptadores remotos solo cuando las
+            credenciales están disponibles. Puede consultar Azure Key Vault si su URI está
+            configurada y una clave requerida no está en el entorno. No ejecuta modelos durante
+            la inicialización; `credential_status` registra metadatos, nunca valores secretos.
+
+        Example:
+            orchestrator = Orchestrator()
+        """
+
         self.credential_status: dict[str, str] = {}
         self.adapters: dict[str, object] = {
             "ollama": OllamaAdapter(),

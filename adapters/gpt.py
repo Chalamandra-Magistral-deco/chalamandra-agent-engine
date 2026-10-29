@@ -31,6 +31,27 @@ class GPTAdapter(ModelAdapter):
         api_key: str | None = None,
         model: str | None = None,
     ):
+        """
+        Configura la credencial y el modelo de OpenAI.
+
+        Args:
+            api_key (str | None): Clave explícita; si se omite, lee `OPENAI_API_KEY`.
+            model (str | None): Modelo explícito; si se omite, lee `OPENAI_MODEL` o `default_version`.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: Si no se dispone de una clave de API.
+
+        Security:
+            No imprimir la clave ni introducirla en los metadatos de solicitudes. La
+            inicialización no realiza una petición al proveedor.
+
+        Example:
+            adapter = GPTAdapter(api_key=secret_from_vault)
+        """
+
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
         self.model = model or os.getenv(
             "OPENAI_MODEL",
