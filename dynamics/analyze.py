@@ -191,6 +191,23 @@ def analyze_trajectory(
         signal: np.ndarray,
     ) -> dict:
 
+        """
+        Calcula estadísticas de amplitud, periodo/frecuencia y régimen para una señal.
+
+        Args:
+            signal (np.ndarray): Valores unidimensionales del canal que comparte el eje temporal exterior.
+
+        Returns:
+            dict: Estadísticas derivadas de la señal, incluidos amplitud, media, cruces por cero,
+            periodicidad cuando puede estimarse y diagnóstico de crecimiento/régimen.
+
+        Raises:
+            Puede propagar errores de NumPy si la señal está vacía o no tiene forma compatible;
+            la función exterior valida previamente dimensiones y muestras.
+
+        Side effects:
+            Ninguno; calcula usando las matrices capturadas del análisis exterior.
+        """
         amplitude = float(
             (np.max(signal) - np.min(signal)) / 2.0
         )

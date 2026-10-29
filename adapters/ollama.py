@@ -45,6 +45,29 @@ class OllamaAdapter(ModelAdapter):
         self.model = model or os.getenv("OLLAMA_MODEL", self.default_version)
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        """
+        Envía una conversación al servidor Ollama configurado.
+
+        Args:
+            request (ModelRequest): Prompt, mensajes, opciones y herramientas nativas opcionales.
+
+        Returns:
+            ModelResponse: Texto y llamadas a herramientas normalizadas, junto con tokens,
+            latencia y estado. Conexiones fallidas, timeout y respuestas vacías producen un
+            estado de error/rechazo en vez de un resultado exitoso falso.
+
+        Raises:
+            asyncio.CancelledError: Puede propagarse si se cancela la coroutine.
+
+        Side effects:
+            Realiza una llamada HTTP al endpoint local configurado (por defecto
+            `http://127.0.0.1:11434/api/chat`). En el uso predeterminado no usa una API de
+            nube ni reporta coste de proveedor; los recursos locales siguen teniendo coste.
+            Las llamadas nativas se devuelven como propuestas, no se ejecutan aquí.
+
+        Example:
+            response = await adapter.generate(ModelRequest(prompt="Di solo: OK"))
+        """
         start_ms = self._now_ms()
 
         messages: list[dict[str, Any]] = request.messages or []

@@ -42,6 +42,30 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def validate_decision(decision: Any, *, verifier_id: str) -> dict[str, Any]:
+    """
+    Valida y normaliza el contrato canónico de una decisión de aceptación.
+
+    Args:
+        decision (Any): Objeto decodificado de JSON que debe contener exactamente los
+            campos incluidos en `CANONICAL_FIELDS`.
+        verifier_id (str): Identidad provisionada para este proceso; debe coincidir
+            con la identidad indicada dentro de la decisión.
+
+    Returns:
+        dict[str, Any]: Copia con los campos canónicos y en el orden del contrato.
+
+    Raises:
+        ValueError: Si el objeto no es un diccionario, faltan o sobran campos, hay
+            tipos/valores inválidos, la identidad no coincide, el hash no es SHA-256
+            hexadecimal, la fecha no tiene zona horaria, o la decisión no satisface
+            las reglas para `accepted`/`rejected`.
+
+    Side effects:
+        Ninguno; no firma ni persiste la decisión.
+
+    Example:
+        validated = validate_decision(payload, verifier_id="verifier-staging")
+    """
     if not isinstance(decision, dict):
         raise ValueError("decision_must_be_json_object")
     missing = [field for field in CANONICAL_FIELDS if field not in decision]
@@ -96,6 +120,30 @@ def validate_decision(decision: Any, *, verifier_id: str) -> dict[str, Any]:
 
 
 def main() -> int:
+    """
+    Lee una decisión por stdin, verifica confirmación explícita y emite su firma Ed25519.
+
+    Args:
+        None. La confirmación se lee del argumento CLI `--confirm` con forma
+        `ACCEPT:<candidate_id>` o `REJECT:<candidate_id>`.
+
+    Returns:
+        int: Código 0 si se validó y firmó; 2 si falta configuración, la entrada es
+        inválida o no coincide la confirmación.
+
+    Raises:
+        Los errores de validación/JSON/lectura previstos se capturan y se reportan por
+        stderr; errores inesperados fuera de esos casos podrían propagarse.
+
+    Side effects:
+        Lee stdin con límite de 128 KiB y requiere `CHALAMANDRA_VERIFIER_ID` y
+        `CHALAMANDRA_ED25519_SEED` de 64 caracteres hexadecimales. Firma el payload
+        canónico; nunca imprime la semilla y no envía la decisión a la API.
+
+    Example:
+        # Ejecutado como proceso CLI con la seed provisionada fuera de AGENTS:
+        # printf '%s' "$DECISION_JSON" | python -m verifier.independent_acceptance_verifier --confirm "ACCEPT:<candidate_id>"
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--confirm",

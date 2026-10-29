@@ -36,6 +36,27 @@ class GeminiAdapter(ModelAdapter):
             )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        """
+        Envía una solicitud REST al modelo Gemini configurado.
+
+        Args:
+            request (ModelRequest): Entrada común del motor con prompt y límites.
+
+        Returns:
+            ModelResponse: Texto normalizado, versión, tokens y latencia; errores del proveedor
+            o respuestas sin texto se representan mediante `status` y `errors`.
+
+        Raises:
+            asyncio.CancelledError: Puede propagarse si se cancela la coroutine.
+
+        Side effects:
+            Realiza solicitudes HTTPS a Google Generative Language; puede consumir cuota/coste.
+            La presencia del adaptador no demuestra que la credencial o el modelo funcionen
+            hasta completar una llamada de prueba.
+
+        Example:
+            response = await adapter.generate(ModelRequest(prompt="Resume el informe"))
+        """
         start_ms = self._now_ms()
 
         contents = []

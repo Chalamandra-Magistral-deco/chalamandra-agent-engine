@@ -152,6 +152,21 @@ def solve_equilibrium(
         raise ValueError("K debe ser > 0")
 
     def equations(x: np.ndarray) -> np.ndarray:
+        """
+        Evalúa los residuos de las dos ecuaciones de equilibrio para un punto candidato.
+
+        Args:
+            x (np.ndarray): Vector de dos componentes `[p_bio, p_sint]`.
+
+        Returns:
+            np.ndarray: Vector de residuos, uno por canal, que el solucionador numérico intenta llevar a cero.
+
+        Raises:
+            Propaga errores numéricos o de forma de NumPy si `x` no tiene dos componentes compatibles.
+
+        Side effects:
+            Ninguno; usa los parámetros capturados por `solve_equilibrium`.
+        """
         p_bio, p_sint = x
 
         return np.array(

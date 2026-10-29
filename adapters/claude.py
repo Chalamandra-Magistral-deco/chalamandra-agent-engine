@@ -42,6 +42,28 @@ class ClaudeAdapter(ModelAdapter):
             raise ValueError("ANTHROPIC_API_KEY no configurada.")
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        """
+        Envía un prompt a Anthropic Messages API y normaliza la respuesta.
+
+        Args:
+            request (ModelRequest): Prompt, configuración de generación, rol y límite de tiempo.
+
+        Returns:
+            ModelResponse: Respuesta trazable con versión, texto, tokens, latencia y estado.
+            Los fallos HTTP, de conexión o de análisis se representan en `status` y `errors`;
+            las respuestas sin texto se marcan como `REFUSED`.
+
+        Raises:
+            asyncio.CancelledError: Puede propagarse si se cancela la coroutine.
+
+        Side effects:
+            Realiza solicitudes HTTPS al proveedor, puede repetir ciertos errores transitorios
+            hasta cuatro intentos totales y puede incurrir en coste según la cuenta de Anthropic.
+            No registra secretos en el resultado estructurado.
+
+        Example:
+            response = await adapter.generate(ModelRequest(prompt="Resume el texto"))
+        """
         start_ms = self._now_ms()
 
         messages = [

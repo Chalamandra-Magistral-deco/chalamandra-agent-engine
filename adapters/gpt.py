@@ -41,6 +41,26 @@ class GPTAdapter(ModelAdapter):
             raise ValueError("OPENAI_API_KEY no configurada.")
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        """
+        Envía una solicitud a la API de OpenAI y normaliza el texto de salida.
+
+        Args:
+            request (ModelRequest): Solicitud común con prompt, rol y límite de tiempo.
+
+        Returns:
+            ModelResponse: Contenido, versión, uso de tokens, latencia y estado. Los errores
+            de proveedor, timeout o parsing se registran en el estado y la lista `errors`.
+
+        Raises:
+            asyncio.CancelledError: Puede propagarse si se cancela la coroutine.
+
+        Side effects:
+            Realiza llamadas HTTPS y puede generar consumo facturable. No registra el valor
+            de la clave en el objeto de respuesta ni ejecuta herramientas por sí misma.
+
+        Example:
+            response = await adapter.generate(ModelRequest(prompt="Explica el resultado"))
+        """
         start_ms = self._now_ms()
 
         input_items: list[dict[str, str]] = []

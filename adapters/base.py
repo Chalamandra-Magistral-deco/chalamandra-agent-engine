@@ -148,6 +148,15 @@ class ModelResponse(BaseModel):
 
     @property
     def total_tokens(self) -> int:
+        """
+        Calcula el total de tokens de entrada y salida registrados.
+
+        Returns:
+            int: Suma de `tokens_in` y `tokens_out`; no consulta al proveedor ni estima tokens ausentes.
+
+        Example:
+            total = response.total_tokens
+        """
         return self.tokens_in + self.tokens_out
 
 

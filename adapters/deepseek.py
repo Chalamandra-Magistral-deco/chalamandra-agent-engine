@@ -44,6 +44,26 @@ class DeepSeekAdapter(ModelAdapter):
             )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
+        """
+        Envía una solicitud de chat a DeepSeek y adapta su respuesta al contrato común.
+
+        Args:
+            request (ModelRequest): Prompt, parámetros de generación y timeout.
+
+        Returns:
+            ModelResponse: Texto y telemetría disponible; errores de timeout/HTTP/parsing
+            se expresan en `status` y `errors` en lugar de respuestas inventadas.
+
+        Raises:
+            asyncio.CancelledError: Puede propagarse si se cancela la coroutine.
+
+        Side effects:
+            Realiza solicitudes HTTPS y puede reintentar respuestas 429/503; el uso remoto
+            puede generar costes. No ejecuta herramientas por cuenta propia.
+
+        Example:
+            response = await adapter.generate(ModelRequest(prompt="Analiza estos datos"))
+        """
         start_ms = self._now_ms()
 
         messages: list[dict[str, str]] = []
