@@ -8,7 +8,19 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ValidationResult:
-    """Resultado de validación de una salida."""
+    """
+    Resultado estructurado de una validación determinista.
+
+    Attributes:
+        status (str): Estado `PASS`, `FAIL` o `NOT_EVALUATED`.
+        passed (bool | None): `True` si pasa, `False` si falla y `None` si no se evaluó.
+        checked (list[str]): Reglas no vacías que se inspeccionaron.
+        errors (list[str]): Incumplimientos o reglas no reconocidas.
+
+    Example:
+        result = TaskValidator().validate("OK", ["exact:OK"])
+        assert result.is_pass
+    """
 
     status: str
     passed: bool | None
@@ -17,13 +29,54 @@ class ValidationResult:
 
     @property
     def is_pass(self) -> bool:
+        """
+        Indica si el estado de validación es exactamente `PASS`.
+
+        Returns:
+            bool: `True` solo para `status == "PASS"`.
+
+        Raises:
+            No genera excepciones deliberadas.
+
+        Example:
+            if result.is_pass:
+                print("La salida pasó las reglas")
+        """
         return self.status == "PASS"
 
     @property
     def is_fail(self) -> bool:
+        """
+        Indica si el estado de validación es exactamente `FAIL`.
+
+        Returns:
+            bool: `True` solo para `status == "FAIL"`; `NOT_EVALUATED` no es un fallo evaluado.
+
+        Raises:
+            No genera excepciones deliberadas.
+
+        Example:
+            if result.is_fail:
+                print(result.errors)
+        """
         return self.status == "FAIL"
 
     def to_dict(self) -> dict:
+        """
+        Serializa los campos públicos del resultado de validación.
+
+        Returns:
+            dict: Estado, valor `passed`, lista de reglas comprobadas y errores.
+
+        Raises:
+            No genera excepciones deliberadas.
+
+        Side effects:
+            No modifica el objeto; devuelve referencias a las listas almacenadas.
+
+        Example:
+            payload = result.to_dict()
+        """
         return {
             "status": self.status,
             "passed": self.passed,
@@ -33,13 +86,45 @@ class ValidationResult:
 
 
 class TaskValidator:
-    """Motor pequeño y determinista de validación."""
+    """
+    Validador determinista de reglas explícitas sobre texto de salida.
+
+    Reglas reconocidas: `non_empty`, `exact:<texto>`, `contains:<texto>` y
+    `regex:<patrón>`. Las reglas desconocidas y expresiones regulares inválidas
+    se registran como errores; no se interpretan como aprobación.
+
+    Example:
+        validator = TaskValidator()
+        result = validator.validate("OK", ["non_empty", "exact:OK"])
+    """
 
     def validate(
         self,
         output: str,
         rules: list[str] | None = None,
     ) -> ValidationResult:
+        """
+        Evalúa la salida contra las reglas explícitas suministradas.
+
+        Args:
+            output (str): Texto que se debe validar.
+            rules (list[str] | None): Lista de reglas admitidas; `None` o una lista vacía
+                devuelve `NOT_EVALUATED` (fail-closed), no una aprobación.
+
+        Returns:
+            ValidationResult: Estado, reglas comprobadas y errores encontrados.
+
+        Raises:
+            Puede propagar errores de tipo si `output` o `rules` no respetan sus tipos
+            declarados; los patrones `regex` inválidos se informan en `errors`.
+
+        Side effects:
+            Ninguno; no hace red ni persistencia.
+
+        Example:
+            result = TaskValidator().validate("resultado", ["non_empty", "contains:ado"])
+            assert result.is_pass
+        """
         rules = list(rules or [])
 
         if not rules:

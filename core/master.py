@@ -25,9 +25,33 @@ from pipeline.lead_classifier import classify_lead
 
 
 class Master:
-    """Control plane central de Chalamandra Agent Engine."""
+    """
+    Punto de control confiable para planificar, enrutar y ejecutar tareas.
+
+    La instancia registra las herramientas integradas, conecta los routers con el
+    orquestador y expone un límite de ejecución mediado por el host. La existencia
+    de una herramienta no equivale a autorización: las llamadas estructuradas deben
+    pasar por `execute_agent_tool_call` cuando procedan de un agente.
+
+    Example:
+        master = Master()
+        inventory = master.inspect()
+        assert "tools" in inventory and "agents" in inventory.
+    """
 
     def __init__(self) -> None:
+        """
+        Inicializa los componentes centrales y registra las herramientas integradas.
+
+        Side effects:
+            Construye el orquestador y consulta la configuración de credenciales.
+            Si `AZURE_KEYVAULT_URI` está configurado y falta una clave de proveedor,
+            la inicialización puede consultar Azure Key Vault. No ejecuta herramientas.
+
+        Example:
+            master = Master()
+            print(master.tools.available())
+        """
         self.orchestrator = Orchestrator()
         self.tools = ToolRegistry()
         self.router = SkillRouter(self.orchestrator, self.tools)
@@ -84,6 +108,24 @@ class Master:
         )
 
     def inspect(self) -> dict:
+        """
+        Devuelve un inventario operativo sin exponer valores de credenciales.
+
+        Returns:
+            dict: Claves `models`, `tools`, `agents`, `capabilities` y
+            `credential_status`. El estado de credenciales incluye fuentes/estados, no
+            secretos.
+
+        Raises:
+            Propaga errores inesperados de los componentes de registro u orquestación.
+
+        Side effects:
+            No ejecuta herramientas ni tareas; consulta estado en memoria.
+
+        Example:
+            inventory = Master().inspect()
+            names = inventory["tools"]
+        """
         return {
             "models": self.orchestrator.available_models(),
             "tools": self.tools.available(),
@@ -94,10 +136,51 @@ class Master:
         }
 
     def route_skill(self, skill: str | Skill) -> dict[str, list[str]]:
+        """
+        Resuelve los modelos y las herramientas asociados a una skill.
+
+        Args:
+            skill (str | Skill): Skill que se va a enrutar, como `"analysis"`.
+
+        Returns:
+            dict[str, list[str]]: Modelos verificados, fallbacks, modelos activos y
+            herramientas compatibles, según el contrato de `SkillRouter.route`.
+
+        Raises:
+            Propaga errores inesperados del router o del registro.
+
+        Side effects:
+            Ninguno intencional; no ejecuta los modelos ni las herramientas.
+
+        Example:
+            route = Master().route_skill("analysis")
+            print(route["tools"])
+        """
         return self.router.route(skill)
 
     def route_agent(self, description: str, skill: str = "reasoning") -> dict:
-        """Asigna una subtask a un perfil y filtra sus herramientas autorizadas."""
+        """
+        Selecciona un perfil de agente y muestra solo sus herramientas registradas.
+
+        Args:
+            description (str): Descripción de la tarea que guía la selección determinista.
+            skill (str): Skill principal; por defecto `"reasoning"`.
+
+        Returns:
+            dict: Perfil serializado con identidad, misión, skills, restricciones y
+            `allowed_tools` intersectadas con el registro actual.
+
+        Raises:
+            Propaga `ValueError` si el registro no puede resolver el perfil.
+
+        Security:
+            La salida describe permisos; no ejecuta ninguna herramienta ni concede
+            permisos fuera de la allowlist declarada por el perfil.
+
+        Example:
+            profile = Master().route_agent("Analiza datos de mercado", "analysis")
+            print(profile["name"], profile["allowed_tools"])
+        """
         profile = self.agent_registry.route(description, skill)
         return profile.to_dict(self.tools.available())
 
@@ -107,6 +190,27 @@ class Master:
         *,
         allow_fallback: bool = True,
     ) -> list[str]:
+        """
+        Obtiene los modelos compatibles con una skill, incluyendo fallbacks opcionales.
+
+        Args:
+            skill (str | Skill): Skill requerida.
+            allow_fallback (bool): Si es `True`, agrega modelos activos cuya skill esté
+                reclamada pero no verificada. Si es `False`, solo devuelve modelos
+                activos con evidencia local de la skill.
+
+        Returns:
+            list[str]: Nombres de modelos en el orden definido por `ModelRouter`.
+
+        Raises:
+            Propaga errores inesperados del router.
+
+        Side effects:
+            No invoca proveedores; consulta el registro de capacidades.
+
+        Example:
+            verified = Master().route_models("analysis", allow_fallback=False)
+        """
         return self.model_router.route(
             skill,
             allow_fallback=allow_fallback,
@@ -118,13 +222,54 @@ class Master:
         *,
         allow_fallback: bool = True,
     ) -> str | None:
+        """
+        Selecciona el primer modelo de la ruta de una skill.
+
+        Args:
+            skill (str | Skill): Skill que debe atenderse.
+            allow_fallback (bool): Permite usar modelos activos no verificados cuando no
+                haya una alternativa verificada o después de estas.
+
+        Returns:
+            str | None: Nombre del primer modelo elegible, o `None` si no existe ninguno.
+
+        Raises:
+            Propaga errores inesperados del router.
+
+        Side effects:
+            No llama al proveedor ni ejecuta una tarea.
+
+        Example:
+            model_name = Master().select_model("reasoning")
+        """
         return self.model_router.select(
             skill,
             allow_fallback=allow_fallback,
         )
 
     async def plan(self, task: str) -> dict:
-        """Descompone una tarea y enruta cada subtask a modelos/tools."""
+        """
+        Descompone una tarea y prepara rutas, permisos y modelos por subtarea.
+
+        Args:
+            task (str): Instrucción original que debe planificarse.
+
+        Returns:
+            dict: Incluye la tarea, `subtask_count` y `steps`; cada paso contiene la
+            subtarea, perfil de agente, modelos verificados/activos/fallback y las
+            herramientas permitidas tras intersectar skill y perfil.
+
+        Raises:
+            Propaga errores no recuperables del descomponedor u orquestador.
+
+        Side effects:
+            Ejecuta la fase de planificación del modelo configurado (puede consumir
+            recursos locales o una API, según el adapter activo). No ejecuta las
+            herramientas planeadas ni publica resultados.
+
+        Example:
+            plan = await Master().plan("Analiza la estabilidad del sistema")
+        """
         subtasks = await self.decomposer.decompose(task)
 
         steps = []
@@ -179,7 +324,28 @@ class Master:
         return {"type": "string"}
 
     def tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
-        """Construye esquemas nativos para el subconjunto autorizado."""
+        """
+        Construye esquemas JSON para llamadas a las herramientas solicitadas.
+
+        Args:
+            names (list[str]): Nombres de herramientas ya registradas y autorizadas por
+                el contexto que solicita los esquemas.
+
+        Returns:
+            list[dict[str, Any]]: Esquemas de función con nombre, descripción, tipos
+            inferidos de anotaciones y parámetros requeridos.
+
+        Raises:
+            ValueError: Si alguno de los nombres no está registrado.
+            TypeError | ValueError: Si no se puede inspeccionar la firma de un handler.
+
+        Security:
+            Generar un esquema no ejecuta ni autoriza por sí solo la herramienta. El
+            límite de confianza debe validar perfil, allowlist y argumentos al ejecutar.
+
+        Example:
+            schemas = Master().tool_schemas(["dynamics"])
+        """
         schemas = []
         for name in names:
             spec = self.tools.get(name)
@@ -217,15 +383,69 @@ class Master:
         return schemas
 
     async def execute_tool(self, tool: str, **kwargs):
-        """Invoca una herramienta desde el límite de confianza de la aplicación."""
+        """
+        Invoca una herramienta registrada desde el contexto confiable del host.
+
+        Args:
+            tool (str): Nombre exacto de la herramienta registrada.
+            **kwargs (Any): Argumentos que debe aceptar la firma del handler.
+
+        Returns:
+            Any: Valor retornado por el handler, esperando handlers async y resultados
+            awaitable de handlers síncronos.
+
+        Raises:
+            ValueError: Si el nombre no está registrado.
+            Exception: Propaga las excepciones del handler.
+
+        Security:
+            Esta interfaz no aplica permisos por perfil; úsala solo desde código confiable.
+            Para llamadas propuestas por un agente, usa `execute_agent_tool_call`.
+
+        Side effects:
+            Dependen del handler: puede escribir estado local o consultar fuentes externas.
+
+        Example:
+            result = await Master().execute_tool(
+                "dynamics", a=1.0, b=1.0, alpha=0.5, gamma=0.2, tau=0.1,
+                duration=1.0, dt=0.01,
+            )
+        """
         return await self.tools.execute(tool, **kwargs)
 
     async def execute_agent_tool_call(self, agent: str, tool_call: Mapping[str, Any]) -> Any:
-        """Valida y ejecuta una llamada estructurada en el límite de confianza.
+        """
+        Valida el contrato y los permisos antes de ejecutar una llamada estructurada.
 
-        El modelo solo puede proponer ``{"name": ..., "arguments": {...}}``.
-        El host comprueba registro, permisos del perfil y contrato de argumentos
-        antes de ejecutar; texto libre del modelo nunca se interpreta como código.
+        Args:
+            agent (str): Nombre de un perfil de agente registrado.
+            tool_call (Mapping[str, Any]): Objeto con exactamente `name` (str) y
+                `arguments` (Mapping[str, Any]); no acepta código ni texto libre ejecutable.
+
+        Returns:
+            Any: Resultado real del handler autorizado.
+
+        Raises:
+            TypeError: Si `tool_call` o `arguments` no son mappings válidos.
+            ValueError: Si las claves son incorrectas, el nombre no existe o los
+                argumentos no cumplen la firma/anotaciones del handler.
+            PermissionError: Si el perfil no tiene permiso para la herramienta.
+            Exception: Puede propagar excepciones del handler tras superar la validación.
+
+        Security:
+            Rechaza claves adicionales, comprueba el registro y la allowlist del perfil,
+            enlaza la firma e intenta validar los tipos anotados con Pydantic. No
+            convierte texto del modelo en código; los efectos posteriores pertenecen al
+            handler. Las reglas de autorización deben seguir aplicándose en este límite.
+
+        Example:
+            result = await master.execute_agent_tool_call(
+                "analyst",
+                {"name": "dynamics", "arguments": {
+                    "a": 1.0, "b": 1.0, "alpha": 0.5, "gamma": 0.2, "tau": 0.1,
+                    "duration": 1.0, "dt": 0.01,
+                }},
+            )
         """
         if not isinstance(tool_call, Mapping):
             raise TypeError("tool_call debe ser un objeto con name y arguments.")
@@ -274,14 +494,65 @@ class Master:
         return await self.execute_tool(tool_name, **dict(arguments))
 
     async def execute_agent_tool(self, agent: str, tool: str, **kwargs):
-        """Compatibilidad: adapta la llamada antigua al contrato estructurado."""
+        """
+        Adaptador de compatibilidad para la interfaz de ejecución anterior.
+
+        Args:
+            agent (str): Perfil de agente que debe autorizar la herramienta.
+            tool (str): Nombre de la herramienta registrada.
+            **kwargs (Any): Argumentos de la herramienta.
+
+        Returns:
+            Any: Resultado devuelto por `execute_agent_tool_call`.
+
+        Raises:
+            TypeError | ValueError | PermissionError: Según los errores de contrato,
+            existencia o autorización detectados por el límite estructurado.
+            Exception: Propaga errores del handler.
+
+        Security:
+            Conserva el mismo control de permisos del contrato estructurado; no es una
+            vía alternativa para saltarse la allowlist.
+
+        Example:
+            result = await master.execute_agent_tool(
+                "analyst", "dynamics", a=1.0, b=1.0, alpha=0.5, gamma=0.2, tau=0.1,
+                duration=1.0, dt=0.01,
+            )
+        """
         return await self.execute_agent_tool_call(
             agent,
             {"name": tool, "arguments": kwargs},
         )
 
     async def execute_task(self, task: str, *, allowed_tools: Sequence[str] | None = None):
-        """Execute a task; an explicit tool allowlist narrows every subtask's permissions."""
+        """
+        Descompone y ejecuta una tarea usando los perfiles y límites del motor.
+
+        Args:
+            task (str): Instrucción a ejecutar.
+            allowed_tools (Sequence[str] | None): Allowlist opcional de nombres; cuando
+                se proporciona, restringe todas las subtareas además de los permisos del
+                perfil. `None` no añade una restricción global extra.
+
+        Returns:
+            ExecutionSummary: Resumen con los resultados, estado y errores por subtarea.
+
+        Raises:
+            ValueError: Si la allowlist no es una secuencia de nombres válidos o incluye
+                herramientas no registradas.
+            Exception: Puede propagar errores no capturados del descomponedor o ejecutor.
+
+        Side effects:
+            Puede llamar al adapter de modelo seleccionado y ejecutar herramientas
+            autorizadas. Sus costes, red y persistencia dependen de los adapters y
+            handlers activos. No publica ni despliega por sí mismo.
+
+        Example:
+            summary = await master.execute_task(
+                "Analiza la estabilidad del sistema", allowed_tools=["dynamics"]
+            )
+        """
         if allowed_tools is not None:
             if isinstance(allowed_tools, (str, bytes)) or any(
                 not isinstance(name, str) or not name.strip() for name in allowed_tools

@@ -58,7 +58,25 @@ def _load_optional_secret(name: str, status: dict[str, str]) -> str | None:
 
 
 class Orchestrator:
-    """Núcleo de ejecución."""
+    """
+    Coordina adapters, capacidades y trazas de ejecución de modelos.
+
+    Ollama se registra inicialmente como adapter local; los adapters de nube solo
+    se añaden si existe la credencial correspondiente. Las skills reclamadas por el
+    registro no se consideran verificadas sin evidencia local.
+
+    Security:
+        `credential_status` contiene únicamente el origen/estado de credenciales,
+        nunca los valores secretos.
+
+    Side effects:
+        Puede leer configuración de entorno y, si se configura Azure Key Vault,
+        recuperar secretos al inicializar; al ejecutar modelos guarda trazas.
+
+    Example:
+        orchestrator = Orchestrator()
+        print(orchestrator.available_models())
+    """
 
     def __init__(self, tracer: Tracer | None = None) -> None:
         self.credential_status: dict[str, str] = {}
@@ -93,9 +111,47 @@ class Orchestrator:
         self.tracer = tracer or Tracer()
 
     def available_models(self) -> list[str]:
+        """
+        Devuelve los nombres de adapters actualmente activos.
+
+        Returns:
+            list[str]: Nombres en orden alfabético. No incluye modelos solo declarados
+            en `MODELS` que no se hayan registrado en `self.adapters`.
+
+        Raises:
+            No genera excepciones deliberadas.
+
+        Side effects:
+            Ninguno; no llama a los proveedores.
+
+        Example:
+            active = orchestrator.available_models()
+        """
         return sorted(self.adapters.keys())
 
     def register(self, name: str, adapter: object) -> None:
+        """
+        Registra o sustituye un adapter en el mapa activo.
+
+        Args:
+            name (str): Alias que se utilizará para invocar el adapter.
+            adapter (object): Objeto que debe implementar `generate(ModelRequest)` y
+                devolver un `ModelResponse` (normalmente mediante una coroutine).
+
+        Returns:
+            None.
+
+        Raises:
+            No genera excepciones deliberadas; la implementación del adapter se valida
+            implícitamente al intentar usarla con `run`.
+
+        Side effects:
+            Inserta o reemplaza una entrada en memoria; no verifica la skill ni la
+            disponibilidad real del proveedor.
+
+        Example:
+            orchestrator.register("custom", adapter)
+        """
         self.adapters[name] = adapter
 
     def adapter_states(self) -> dict[str, dict[str, object]]:
@@ -220,6 +276,28 @@ class Orchestrator:
         return sorted(compatible)
 
     async def run(self, model: str, request: ModelRequest) -> ModelResponse:
+        """
+        Ejecuta una solicitud con un adapter activo y registra la respuesta.
+
+        Args:
+            model (str): Alias de un adapter activo.
+            request (ModelRequest): Prompt, rol, parámetros y metadatos de la solicitud.
+
+        Returns:
+            ModelResponse: Respuesta retornada por el adapter.
+
+        Raises:
+            ValueError: Si el alias no está conectado al orquestador.
+            Exception: Propaga errores no absorbidos por el adapter.
+
+        Side effects:
+            Invoca el adapter, lo que puede usar red/coste externo según proveedor, y
+            registra la respuesta a través del `Tracer` configurado.
+
+        Example:
+            request = ModelRequest(prompt="Responde solo: OK", role=ModelRole.PLANNER)
+            response = await orchestrator.run("ollama", request)
+        """
         adapter = self.adapters.get(model)
         if adapter is None:
             raise ValueError(f"Modelo no conectado al orquestador: {model}")
@@ -232,13 +310,28 @@ class Orchestrator:
         models: list[str],
         request: ModelRequest,
     ) -> dict[str, ModelResponse]:
-        """Ejecuta modelos en paralelo sin mutar el registro de adaptadores.
+        """
+        Ejecuta una solicitud contra cada nombre de modelo sin mutar el registro.
 
-        Las claves de `results` representan instancias de ejecución:
-        ollama#0, ollama#1, etc.
+        Args:
+            models (list[str]): Lista de alias activos; nombres repetidos se ejecutan
+                como instancias independientes.
+            request (ModelRequest): Solicitud compartida para cada ejecución.
 
-        El registro canónico sigue conteniendo únicamente:
-        ollama, gemini, claude, etc.
+        Returns:
+            dict[str, ModelResponse]: Resultados identificados como `modelo#índice`;
+            los fallos de ejecución se representan como respuestas con errores.
+
+        Raises:
+            Propaga `asyncio.CancelledError` u otros errores que impidan completar el
+            control de concurrencia antes de construir un resultado.
+
+        Side effects:
+            Ejecuta proveedores en paralelo y registra las respuestas, incluidas las
+            fallidas, en el tracer.
+
+        Example:
+            results = await orchestrator.run_parallel(["ollama"], request)
         """
         tasks: list[tuple[str, str, asyncio.Task[ModelResponse]]] = []
 

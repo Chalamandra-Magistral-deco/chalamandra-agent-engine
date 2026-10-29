@@ -14,6 +14,27 @@ from dynamics.stability import (
 
 @dataclass(frozen=True)
 class SweepResult:
+    """
+    Resumen inmutable de una simulación y sus diagnósticos locales.
+
+    Attributes:
+        alpha (float): Parámetro de acoplamiento biológico.
+        gamma (float): Parámetro de acoplamiento sintético.
+        tau (float): Retardo usado en el modelo.
+        p_bio (float): Equilibrio del canal biológico.
+        p_sint (float): Equilibrio del canal sintético.
+        effective_coupling (float): Acoplamiento efectivo evaluado.
+        local_hopf_possible (bool): Indica si el criterio local permite Hopf.
+        tau_hopf (float | None): Retardo crítico cuando aplica.
+        omega_hopf (float | None): Frecuencia angular crítica cuando aplica.
+        amplitude_bio (float): Amplitud medida en el canal biológico.
+        amplitude_sint (float): Amplitud medida en el canal sintético.
+        period_bio (float | None): Periodo detectado, si existe.
+        frequency_bio (float | None): Frecuencia detectada en Hz, si existe.
+
+    Note:
+        El objeto resume una simulación local; no realiza efectos fuera del proceso.
+    """
     alpha: float
     gamma: float
     tau: float

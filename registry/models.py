@@ -13,6 +13,21 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ModelInfo:
+    """
+    Metadatos y evidencia de las capacidades de un modelo.
+
+    Attributes:
+        name (str): Alias del modelo en el registro.
+        provider (str): Proveedor del adapter.
+        local (bool): Indica si el modelo se ejecuta localmente.
+        versions (list[str]): Versiones o identificadores declarados.
+        skills_verified (set[str]): Skills respaldadas por pruebas/benchmarks locales.
+        skills_claimed (set[str]): Skills declaradas por el proveedor, aún no verificadas localmente.
+        evidence (dict[str, str]): Notas y referencias de soporte.
+
+    Invariant:
+        Una skill reclamada no debe promoverse a verificada sin evidencia de una prueba local.
+    """
     name: str
     provider: str
     local: bool = False
@@ -26,6 +41,21 @@ class ModelInfo:
         return self.skills_verified | self.skills_claimed
 
     def is_verified_for(self, skill: str) -> bool:
+        """
+        Comprueba si el registro contiene evidencia local para una skill.
+
+        Args:
+            skill (str): Nombre exacto de la skill.
+
+        Returns:
+            bool: `True` solo si la skill pertenece a `skills_verified`.
+
+        Raises:
+            No genera excepciones deliberadas para nombres de skill tipo string.
+
+        Example:
+            verified = model_info.is_verified_for("reasoning")
+        """
         return skill in self.skills_verified
 
 

@@ -18,6 +18,25 @@ if TYPE_CHECKING:
 
 @dataclass
 class SubtaskResult:
+    """
+    Resultado de ejecución y validación de una subtarea.
+
+    Attributes:
+        subtask_id (str): ID de la subtarea.
+        description (str): Instrucción ejecutada.
+        skill (str): Skill aplicada.
+        output (str): Texto devuelto por el modelo.
+        model_used (str): Adapter elegido, o `unknown` si falló antes de obtenerlo.
+        status (str): Estado de ejecución o `validation_failed`.
+        errors (list[str]): Errores de ejecución y validación.
+        validation_status (str): `PASS`, `FAIL`, `NOT_EVALUATED` o `SKIPPED`.
+        validation_errors (list[str]): Detalle de los incumplimientos.
+        agent (str): Perfil asignado.
+        allowed_tools (list[str]): Herramientas permitidas después de aplicar filtros.
+
+    Security:
+        El resultado es evidencia de estado, no una autorización de publicar el output.
+    """
     subtask_id: str
     description: str
     skill: str
@@ -33,6 +52,18 @@ class SubtaskResult:
 
 @dataclass
 class ExecutionSummary:
+    """
+    Resumen de una ejecución de plan completo.
+
+    Attributes:
+        task (str): Instrucción de nivel superior.
+        subtask_results (dict[str, SubtaskResult]): Resultados indexados por ID.
+        status (str): `completed`, `empty_plan`, `error` o `partial_error`.
+        errors (list[str]): Errores de planificación/ejecución agregados.
+
+    Example:
+        summary = await executor.execute_plan("Tarea", subtasks)
+    """
     task: str
     subtask_results: dict[str, SubtaskResult] = field(default_factory=dict)
     status: str = "completed"
@@ -40,21 +71,65 @@ class ExecutionSummary:
 
 
 class Executor:
-    """Ejecuta un plan de Subtasks organizadas como DAG."""
+    """
+    Ejecutor de subtareas organizadas como DAG.
+
+    Procesa por niveles topológicos; las subtareas de un nivel se ejecutan en
+    paralelo y los niveles posteriores reciben los resultados de sus dependencias.
+    Cada resultado `ok` del modelo debe superar un `PASS` explícito de las reglas
+    para considerarse validado; `NOT_EVALUATED` no equivale a aceptación.
+
+    Security:
+        Intersecta las herramientas con los permisos del perfil y con la allowlist
+        opcional del plan; los handlers siguen siendo el punto donde ocurren efectos.
+
+    Example:
+        summary = await executor.execute_plan("Responde solo: OK", [subtask])
+    """
 
     def __init__(
         self,
         master: "Master | None" = None,
         validator: TaskValidator | None = None,
     ) -> None:
+        """
+        Configura el Master de ejecución y el validador de resultados.
+
+        Args:
+            master (Master | None): Control plane a utilizar; si se omite, crea un Master.
+            validator (TaskValidator | None): Validador; si se omite, crea el validador determinista.
+
+        Returns:
+            None.
+
+        Side effects:
+            Si no se proporciona `master`, inicializará el orquestador y sus adapters.
+
+        Example:
+            executor = Executor(master=master, validator=TaskValidator())
+        """
         self.master = master or Master()
         self.validator = validator or TaskValidator()
 
     def build_levels(self, subtasks: list[Subtask]) -> list[list[Subtask]]:
-        """Organiza las subtasks en niveles independientes para ejecución paralela.
+        """
+        Organiza subtareas en niveles topológicos para ejecución paralela.
 
-        Nivel 0: Subtasks sin dependencias.
-        Nivel N: Subtasks cuyas dependencias están en niveles < N.
+        Args:
+            subtasks (list[Subtask]): Subtareas con IDs únicos y dependencias por ID.
+
+        Returns:
+            list[list[Subtask]]: Niveles ordenados; cada nivel contiene tareas cuyas
+            dependencias están en niveles anteriores.
+
+        Raises:
+            ValueError: Si hay IDs duplicados, dependencias inexistentes o ciclos.
+
+        Side effects:
+            No ejecuta tareas ni modifica el plan.
+
+        Example:
+            levels = executor.build_levels([Subtask("s1", "A", "reasoning")])
         """
         task_map = {s.id: s for s in subtasks}
 
@@ -104,7 +179,32 @@ class Executor:
         *,
         allowed_tools_override: set[str] | None = None,
     ) -> SubtaskResult:
-        """Ejecuta una subtask individual construyendo su prompt con el contexto previo."""
+        """
+        Ejecuta una subtarea, mediando selección de modelo, permisos y validación.
+
+        Args:
+            subtask (Subtask): Instrucción, skill, dependencias y reglas de validación.
+            context (dict[str, SubtaskResult]): Resultados de dependencias ya ejecutadas.
+            allowed_tools_override (set[str] | None): Allowlist global opcional que
+                reduce las herramientas del perfil; nunca las amplía.
+
+        Returns:
+            SubtaskResult: Salida del modelo junto con modelo, agente, permisos, estado
+            de ejecución y estado de validación.
+
+        Raises:
+            ValueError: Si no hay modelo activo para la skill.
+            RuntimeError: Si un adapter sin soporte devuelve llamadas a herramientas,
+            se exceden cinco llamadas por respuesta o se supera el límite de rondas.
+            Exception: Puede propagar fallos no absorbidos del adapter/orquestador.
+
+        Side effects:
+            Llama al modelo y ejecuta únicamente las herramientas aprobadas por el
+            perfil y la allowlist. Los handlers pueden tener efectos locales o externos.
+
+        Example:
+            result = await executor.execute_subtask(subtask, context={})
+        """
         dep_contexts = []
         for dep_id in subtask.depends_on:
             if dep_id in context:
@@ -282,7 +382,32 @@ class Executor:
         *,
         allowed_tools: list[str] | None = None,
     ) -> ExecutionSummary:
-        """Ejecuta el plan de subtasks respetando los niveles topológicos y resolviendo dependencias."""
+        """
+        Ejecuta un plan por niveles y agrega los resultados parciales.
+
+        Args:
+            task (str): Instrucción general que se incorpora al resumen.
+            subtasks (list[Subtask]): Grafo que se debe ejecutar.
+            allowed_tools (list[str] | None): Lista adicional de herramientas permitidas
+                para todas las subtareas; no anula los límites del perfil.
+
+        Returns:
+            ExecutionSummary: `empty_plan` si no hay subtareas, `error` si el DAG es
+            inválido, `partial_error` si falla una subtarea y `completed` si terminan
+            todas sin error de ejecución/validación.
+
+        Raises:
+            asyncio.CancelledError: Si la ejecución se cancela.
+            Los errores ordinarios por subtarea se guardan en el resumen en lugar de
+            cancelar todo el plan.
+
+        Side effects:
+            Ejecuta los adapters y handlers requeridos por las subtareas. No publica el
+            resumen ni lo marca como aceptación empresarial.
+
+        Example:
+            summary = await executor.execute_plan("Analiza", subtasks, allowed_tools=["dynamics"])
+        """
         summary = ExecutionSummary(task=task)
 
         if not subtasks:

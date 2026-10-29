@@ -18,6 +18,22 @@ from pipeline.comparison import similarity
 
 @dataclass
 class SynthesisResult:
+    """
+    Resultado de combinar salidas de varios modelos.
+
+    Attributes:
+        output (str): Texto elegido por la estrategia.
+        strategy (str): Estrategia aplicada: `vote`, `longest` o `highest_confidence`.
+        contributors (list[str]): Modelos que contribuyeron al resultado seleccionado.
+        confidence (float): Métrica de consenso o confianza autodeclarada; no implica
+            calibración estadística.
+        rationale (str): Explicación de la selección.
+        errors (list[str]): Errores como ausencia de respuestas válidas o estrategia desconocida.
+
+    Note:
+        El motor no invoca un LLM adicional. `highest_confidence` se basa en una
+        confianza declarada por el proveedor y puede usar `longest` como fallback.
+    """
     output: str
     strategy: str
     contributors: list[str]
@@ -199,7 +215,27 @@ def synthesize(
     responses: dict[str, ModelResponse],
     strategy: str = "vote",
 ) -> SynthesisResult:
-    """Ejecuta la estrategia solicitada."""
+    """
+    Combina respuestas exitosas con una estrategia determinista.
+
+    Args:
+        responses (dict[str, ModelResponse]): Respuestas por alias de modelo.
+        strategy (str): `vote` agrupa por similitud, `longest` elige el texto más
+            extenso, `highest_confidence` usa confianza autodeclarada.
+
+    Returns:
+        SynthesisResult: Resultado seleccionado; para estrategia desconocida o
+        ausencia de respuestas válidas devuelve output vacío y registra el error.
+
+    Raises:
+        Propaga errores inesperados de la estrategia o del cálculo de similitud.
+
+    Side effects:
+        Ninguno externo; no hace llamadas a modelos ni persiste resultados.
+
+    Example:
+        result = synthesize(responses, strategy="vote")
+    """
     fn = _STRATEGIES.get(strategy)
 
     if fn is None:
