@@ -1,0 +1,30 @@
+# Integrate the checked-out Agents code with a separately built CatedralX image.
+# Always use versioned candidate tags; never overwrite a stable production tag.
+ARG CATEDRALX_IMAGE=catedralx:v1.0-canonico-wip-20261028
+ARG AGENTS_IMAGE=chalamandra-agent-engine:integrated-wip-20261028-r4
+FROM ${CATEDRALX_IMAGE} AS catedralx_source
+FROM ${AGENTS_IMAGE}
+
+USER root
+# Overlay active source directories so the runtime does not silently use stale base-image code.
+COPY adapters/ /app/adapters/
+COPY api/ /app/api/
+COPY config/ /app/config/
+COPY core/ /app/core/
+COPY dynamics/ /app/dynamics/
+COPY pipeline/ /app/pipeline/
+COPY registry/ /app/registry/
+COPY scripts/ /app/scripts/
+COPY security/ /app/security/
+COPY telemetry/ /app/telemetry/
+COPY verifier/ /app/verifier/
+
+# Use the separately built image from the current CatedralX worktree.
+COPY --from=catedralx_source /app/elite /app/CatedralX/elite
+COPY --from=catedralx_source /app/BIN /app/CatedralX/BIN
+
+RUN chown -R chalamandra:chalamandra \
+    /app/adapters /app/api /app/config /app/core /app/dynamics /app/pipeline \
+    /app/registry /app/scripts /app/security /app/telemetry /app/verifier /app/CatedralX
+USER chalamandra
+ENV CATEDRALX_PATH=/app/CatedralX

@@ -1,0 +1,8 @@
+# Dedicated worker runtime. Build the shared application image first, then pass
+# it as --build-arg AGENTS_BASE_IMAGE=<validated-image-tag>.
+ARG AGENTS_BASE_IMAGE=chalamandra-agent-engine:integrated-wip-20261028-r4
+FROM ${AGENTS_BASE_IMAGE}
+ENV CHALAMANDRA_WORKER_HEARTBEAT_PATH=/home/chalamandra/.local/state/chalamandra/agents/worker_heartbeat.json
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD python -c 'import json,os,sys,time; p=os.environ["CHALAMANDRA_WORKER_HEARTBEAT_PATH"]; s=os.stat(p); d=json.load(open(p,encoding="utf-8")); sys.exit(0 if time.time()-s.st_mtime < 90 and d.get("status") in {"idle","processing"} and isinstance(d.get("pid"),int) else 1)'
+CMD ["python","-m","api.worker_loop"]

@@ -11,6 +11,7 @@ from pathlib import Path
 from api import task_bus
 from api import candidate_store
 from core.master import Master
+from api.heartbeat import write_worker_heartbeat
 
 
 class TaskTimeout(Exception):
@@ -498,9 +499,12 @@ def process_task(task: dict) -> dict:
 
 def main():
     print("Worker persistente iniciado. Procesando tareas reales...")
+    write_worker_heartbeat("idle")
     while True:
+        write_worker_heartbeat("idle")
         task = task_bus.get_next_task()
         if task:
+            write_worker_heartbeat("processing", task_id=task["task_id"])
             signal.signal(signal.SIGALRM, _task_timeout_handler)
             signal.alarm(60)
             try:

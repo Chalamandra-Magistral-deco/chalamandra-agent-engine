@@ -281,6 +281,7 @@ def test_token_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_non_loopback_requires_token(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ALLOW_CONTAINER_BIND", raising=False)
     monkeypatch.delenv("CHALAMANDRA_API_TOKEN", raising=False)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
 

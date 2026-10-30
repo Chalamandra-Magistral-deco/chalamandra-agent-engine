@@ -1,0 +1,46 @@
+services:
+  api:
+    image: agents-api:latest
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      args:
+        CATEDRALX_BASE_IMAGE: catedralx:v1.0-canonico
+    container_name: agents-api
+    ports:
+      - "127.0.0.1:8228:8766"
+    env_file:
+      - config/.env
+    environment:
+      CATEDRALX_PATH: /app/CatedralX
+      PYTHONPATH: /app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8766/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    restart: unless-stopped
+    networks: [agents_net]
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+      args:
+        AGENTS_BASE_IMAGE: agents-api:latest
+    container_name: agents-worker
+    env_file:
+      - config/.env
+    environment:
+      CATEDRALX_PATH: /app/CatedralX
+      PYTHONPATH: /app
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [agents_net]
+
+networks:
+  agents_net:
+    driver: bridge

@@ -4,7 +4,8 @@ import hmac
 import json
 import os
 import time
-import urllib.request
+import requests
+from urllib.parse import urlparse
 import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,7 +98,7 @@ def dispatch_event(
         )
         for attempt in range(3):
             try:
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with requests.get(req.full_url, timeout=5, allow_redirects=False) as resp:
                     if 200 <= resp.status < 300:
                         success_count += 1
                         break
