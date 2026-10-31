@@ -13,3 +13,6 @@ logs/
 **/.env
 **/.env.*
 !.env.example
+*.bak-heartbeat-*
+tasks.db
+tasks.db-*
