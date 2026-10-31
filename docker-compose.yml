@@ -9,6 +9,9 @@ services:
     container_name: agents-api
     ports:
       - "127.0.0.1:8228:8766"
+      - "127.0.0.1:8766:8766"
+    volumes:
+      - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
     env_file:
       - config/.env
     environment:
@@ -35,11 +38,18 @@ services:
     environment:
       CATEDRALX_PATH: /app/CatedralX
       PYTHONPATH: /app
+    volumes:
+      - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
     networks: [agents_net]
+
+volumes:
+  agents_runtime_state:
+    external: true
+    name: agents_agents_runtime_state
 
 networks:
   agents_net:
