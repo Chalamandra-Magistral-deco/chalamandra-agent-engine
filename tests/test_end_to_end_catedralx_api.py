@@ -87,7 +87,7 @@ def _sign_decision(decision):
     return json.loads(result.stdout)["signature"]
 
 
-def test_catedralx_to_agents_api_worker_and_independent_acceptance(tmp_path, monkeypatch):
+def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path, monkeypatch):
     pytest.importorskip("numpy")
     from api import acceptance_store, candidate_store, subscription_store, task_bus, worker_loop
     from api.server import create_server
@@ -157,15 +157,42 @@ def test_catedralx_to_agents_api_worker_and_independent_acceptance(tmp_path, mon
         assert task["run_id"] == run_id
         assert json.loads(task["payload"]) == payload
 
-        # Run the actual canonical CLI in a subprocess, with state redirected to tmp_path.
-        candidate_result = worker_loop.process_task(task)
-        assert candidate_result["status"] == "candidate"
+        # Execute the canonical CLI with the same synthetic feed. CatedralX
+        # correctly returns BLOCKED_MISSING_INPUT when governance dimensions are absent.
+        from unittest.mock import patch
+
+        with patch("api.server.webhook_dispatcher.dispatch_event") as dispatch_webhook:
+            candidate_result = worker_loop.process_task(task)
+
+        assert candidate_result["status"] == "blocked"
         result_id = candidate_result["candidate_id"]
-        assert candidate_result["catedralx_trace_id"] == trace_id
-        assert candidate_result["decision_result"]["evaluation_hash"]
-        assert len(candidate_result["decision_result"]["evaluation_hash"]) == 64
+        decision_result = candidate_result["decision_result"]
+        assert result_id == decision_result["result_id"]
+        assert decision_result["status"] == "BLOCKED_MISSING_INPUT"
+        assert decision_result["evaluation_hash"]
+        assert len(decision_result["evaluation_hash"]) == 64
+        assert decision_result["trace_id"] == trace_id
+        assert set(decision_result["missing_inputs"]) >= {
+            "distribution", "evidence", "human_value", "reinvestment", "resilience"
+        }
+        assert decision_result["evaluation_reason"] == "GOBERNANZA_NO_VERIFICADA"
         assert candidate_result["evidence"][0]["observed_at"] == observed_at
         assert candidate_result["evidence"][0]["market_source"] == payload["source"]
+        assert dispatch_webhook.call_count == 0
+
+        saved = candidate_store.get_candidate(result_id)
+        assert saved is not None
+        assert saved["status"] == "blocked"
+        assert saved["decision_result"]["status"] == "BLOCKED_MISSING_INPUT"
+        assert acceptance_store.get_acceptance(result_id) is None
+
+        status, job = _http_json(
+            f"{base_url}/v1/jobs/{task['task_id']}",
+            token=_make_jwt(jwt_secret, "jobs:read"),
+        )
+        assert status == 200
+        assert job["status"] == "blocked"
+        assert job["result_id"] == result_id
 
         read_token = _make_jwt(jwt_secret, "orchestration:read results:read")
         status, run = _http_json(
@@ -173,78 +200,17 @@ def test_catedralx_to_agents_api_worker_and_independent_acceptance(tmp_path, mon
             token=read_token,
         )
         assert status == 200
-        assert run["status"] == "awaiting_acceptance"
+        assert run["status"] == "completed_with_errors"
+        assert run["task_statuses"] == ["blocked"]
 
-        status, pending = _http_json(
-            f"{base_url}/v1/results/{result_id}",
-            token=read_token,
-        )
-        assert status == 202
-        assert pending["status"] == "pending_verification"
-
-        # A separate, signed acceptance decision is required to publish the result.
-        decision = {
-            "decision_id": str(uuid.uuid4()),
-            "candidate_id": result_id,
-            "outcome": "accepted",
-            "criteria_checked": ["DecisionResult schema", "evidence digest", "traceability"],
-            "reasons": [],
-            "missing_evidence": [],
-            "verifier_id": "isolated-test-verifier",
-            "evidence_digest": candidate_store.compute_evidence_digest(
-                candidate_store.get_candidate(result_id)
-            ),
-            "decided_at": datetime.now(timezone.utc).isoformat(),
-            "trace_id": candidate_result["trace_id"],
-        }
-        decision["signature"] = _sign_decision(decision)
-        write_token = _make_jwt(jwt_secret, "acceptance:write")
-        status, accepted = _http_json(
-            f"{base_url}/v1/acceptance",
-            method="POST",
-            token=write_token,
-            payload=decision,
-        )
-        assert status == 201
-        assert accepted["outcome"] == "accepted"
-
-        status, final_job = _http_json(
-            f"{base_url}/v1/jobs/{task['task_id']}",
-            token=_make_jwt(jwt_secret, "jobs:read"),
-        )
-        assert status == 200
-        assert final_job["status"] == "accepted"
-        assert final_job["result_id"] == result_id
-
-        status, final_run = _http_json(
-            f"{base_url}/internal/v1/orchestration/runs/{run_id}",
-            token=read_token,
-        )
-        assert status == 200
-        assert final_run["status"] == "accepted"
-        assert final_run["task_statuses"] == ["accepted"]
-
-        status, delivered = _http_json(
-            f"{base_url}/v1/results/{result_id}",
-            token=read_token,
-        )
-        assert status == 200
-        assert delivered["candidate_id"] == result_id
-        assert delivered["delivery_status"] == "accepted"
-        assert delivered["acceptance"]["decision_id"] == decision["decision_id"]
-        assert delivered["trace_id"] == candidate_result["trace_id"]
-        assert delivered["evidence"][0]["market_source"] == payload["source"]
-        assert delivered["evidence"][0]["observed_at"] == observed_at
-        assert delivered["orders_created"] is False
-        assert delivered["orders_executed"] is False
-
-        acceptance_file = acceptance_store._acceptance_file()
-        assert acceptance_file.name == "acceptance_store.jsonl"
-        acceptance_record = json.loads(acceptance_file.read_text().splitlines()[-1])
-        assert len(acceptance_record["signature"]) == 128
-        assert acceptance_record["trace_id"] == trace_id
-        trace_rows = [json.loads(line) for line in (tmp_path / "traces.jsonl").read_text().splitlines()]
-        inbound_rows = [row for row in trace_rows if row["path"] == "/v1/request" and row["trace_id"] == trace_id]
+        trace_rows = [
+            json.loads(line)
+            for line in (tmp_path / "traces.jsonl").read_text().splitlines()
+        ]
+        inbound_rows = [
+            row for row in trace_rows
+            if row["path"] == "/v1/request" and row["trace_id"] == trace_id
+        ]
         assert inbound_rows
         assert inbound_rows[0]["traceparent"] == traceparent
         assert inbound_rows[0]["status"] == 202

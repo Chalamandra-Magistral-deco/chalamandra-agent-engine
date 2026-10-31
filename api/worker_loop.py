@@ -158,7 +158,9 @@ def _run_catedralx(payload: dict) -> dict:
             return {"status": "BLOCKED", "reason": "decision_result_evaluation_hash_missing_or_invalid"}
         if (
             decision.get("engine") != "CatedralX"
-            or decision.get("status") not in {"ACCEPTED", "UNCERTAIN", "REJECTED"}
+            or decision.get("status") not in {
+                "ACCEPTED", "UNCERTAIN", "REJECTED", "BLOCKED_MISSING_INPUT"
+            }
             or decision.get("analysis_only") is not True
             or decision.get("orders_created") is not False
             or decision.get("orders_executed") is not False
