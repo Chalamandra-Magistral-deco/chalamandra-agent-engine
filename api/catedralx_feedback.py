@@ -43,7 +43,10 @@ def _load_economic_cycle(root: Path):
             raise RuntimeError("Ya existe un paquete FEX de otra copia de CatedralX; feedback bloqueado")
     module = importlib.import_module("FEX.GOVERNANCE.economic_cycle")
     expected_file = (root / "elite" / "FEX" / "GOVERNANCE" / "economic_cycle.py").resolve()
-    if Path(module.__file__).resolve() != expected_file:
+    module_file = getattr(module, "__file__", None)
+    if not isinstance(module_file, str):
+        raise RuntimeError("El módulo economic_cycle no tiene una ruta de archivo verificable")
+    if Path(module_file).resolve() != expected_file:
         raise RuntimeError("Se cargó un módulo economic_cycle ajeno a CATEDRALX_PATH")
     return module
 

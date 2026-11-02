@@ -52,15 +52,20 @@ def is_safe_url(url: str) -> bool:
         } or hostname.endswith(".metadata.google.internal"):
             return False
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses: set[ipaddress.IPv4Address | ipaddress.IPv6Address]
         try:
             direct_ip = ipaddress.ip_address(hostname)
             addresses = {direct_ip}
         except ValueError:
             infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
-            addresses = {
-                ipaddress.ip_address(item[4][0].split("%", 1)[0])
-                for item in infos
-            }
+            addresses = set()
+            for item in infos:
+                address_text: object = item[4][0]
+                if not isinstance(address_text, str):
+                    return False
+                addresses.add(
+                    ipaddress.ip_address(address_text.split("%", 1)[0])
+                )
         if not addresses:
             return False
 
