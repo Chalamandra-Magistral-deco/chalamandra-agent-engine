@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,8 +9,17 @@ from pathlib import Path
 from nacl.signing import SigningKey
 
 ROOT = Path(__file__).resolve().parents[2]
-CATEDRALX_ROOT = ROOT / "CatedralX"
+_configured_root = os.environ.get("CATEDRALX_PATH", "").strip()
+CATEDRALX_ROOT = (
+    Path(_configured_root).expanduser().resolve()
+    if _configured_root
+    else (ROOT / "CatedralX").resolve()
+)
 ELITE_ROOT = CATEDRALX_ROOT / "elite"
+if not (ELITE_ROOT / "FEX" / "GOVERNANCE" / "economic_cycle.py").is_file():
+    raise RuntimeError(
+        f"CatedralX no contiene FEX/GOVERNANCE/economic_cycle.py: {CATEDRALX_ROOT}"
+    )
 if str(ELITE_ROOT) not in sys.path:
     sys.path.insert(0, str(ELITE_ROOT))
 

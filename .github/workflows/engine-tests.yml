@@ -18,6 +18,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout canonical CatedralX source for tests
+        uses: actions/checkout@v4
+        with:
+          repository: Chalamandra-Magistral-deco/CatedralX
+          ref: c1a3d0334b9193417e5f614b68bb51011fdd887f
+          path: CatedralX
+          token: ${{ secrets.CATEDRALX_READ_TOKEN }}
+          persist-credentials: false
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -33,6 +42,8 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run unit tests
+        env:
+          CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
         run: python -m pytest -q
 
       - name: Lint
