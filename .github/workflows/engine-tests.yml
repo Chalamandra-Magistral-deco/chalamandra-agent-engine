@@ -44,7 +44,7 @@ jobs:
       - name: Run unit tests
         env:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
-        run: python -m pytest -q
+        run: python -m pytest -q --ignore=CatedralX
 
       - name: Lint
         run: python -m ruff check api adapters core dynamics pipeline registry security telemetry tests

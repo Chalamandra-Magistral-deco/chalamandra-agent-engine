@@ -50,7 +50,7 @@ jobs:
       - name: Run every test (fail closed)
         env:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
-        run: python -m pytest -q --junitxml=junit-agents.xml
+        run: python -m pytest -q --ignore=CatedralX --junitxml=junit-agents.xml
 
       - name: Ruff lint gate
         run: python -m ruff check api adapters core dynamics pipeline registry security telemetry tests
