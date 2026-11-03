@@ -417,6 +417,68 @@ def test_create_subscription_requires_write_scope_and_persists_schema(local_api,
     assert target.exists()
 
 
+@pytest.mark.parametrize("scopes", ["subscriptions:read", "jobs:read"])
+def test_delete_subscription_requires_write_scope(local_api, monkeypatch, tmp_path, scopes):
+    from api import subscription_store
+
+    port, _ = local_api
+    monkeypatch.setenv("CHALAMANDRA_SSRF_ALLOW_LOCALHOST", "true")
+    monkeypatch.setattr(subscription_store, "is_safe_url", lambda _url: True)
+    target = tmp_path / "subscriptions.jsonl"
+    monkeypatch.setattr(subscription_store, "_subs_file", lambda: target)
+    payload = {
+        "endpoint_url": "https://webhook.example.test/callback",
+        "event_types": ["result.accepted"],
+    }
+
+    status, created = request(
+        port,
+        "/v1/subscriptions",
+        method="POST",
+        payload=payload,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='subscriptions:write')}"},
+    )
+    assert status == 201
+    subscription_id = created["subscription_id"]
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection.request(
+        "DELETE",
+        f"/v1/subscriptions/{subscription_id}",
+        headers={"Authorization": f"Bearer {make_jwt(scopes=scopes)}"},
+    )
+    denied_response = connection.getresponse()
+    denied_body = denied_response.read()
+    connection.close()
+    status = denied_response.status
+    denied = json.loads(denied_body) if denied_body else {}
+    assert status == 401
+    assert denied["error"] == "unauthorized"
+    current = next(
+        item for item in subscription_store.list_subscriptions()
+        if item["subscription_id"] == subscription_id
+    )
+    assert current["status"] == "enabled"
+
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection.request(
+        "DELETE",
+        f"/v1/subscriptions/{subscription_id}",
+        headers={"Authorization": f"Bearer {make_jwt(scopes='subscriptions:write')}"},
+    )
+    response = connection.getresponse()
+    response_body = response.read()
+    connection.close()
+
+    assert response.status == 204
+    assert response_body == b""
+    current = next(
+        item for item in subscription_store.list_subscriptions()
+        if item["subscription_id"] == subscription_id
+    )
+    assert current["status"] == "disabled"
+
+
 def test_distribution_requires_accepted_candidate_and_service_identity(local_api, monkeypatch):
     from unittest.mock import patch
     from api import candidate_store, acceptance_store, webhook_dispatcher

@@ -368,6 +368,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/v1/subscriptions/"):
+            if not self._authorized(
+                require_token=True,
+                required_scope="subscriptions:write",
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             sub_id = path.split("/")[-1]
             if subscription_store.disable_subscription(sub_id):
                 self.send_response(HTTPStatus.NO_CONTENT)
