@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --detach --name chalamandra-agents-ci chalamandra-agents:ci
-          for attempt in $(seq 1 30); do
+          for ((attempt = 1; attempt <= 30; attempt++)); do
             status="$(docker inspect --format='{{.State.Health.Status}}' chalamandra-agents-ci)"
             if [[ "$status" == "healthy" ]]; then
               echo "Container health check passed."
