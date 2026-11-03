@@ -8,6 +8,7 @@ CHALAMANDRA_VERIFIER_PUBLIC_KEY to the public key trusted by the API.
 Example (reviewed input JSON -> isolated signer -> API submitter):
   python verifier/independent_acceptance_verifier.py --confirm ACCEPT:<candidate_id> \
     < decision.json | env -u CHALAMANDRA_ED25519_SEED \
+      CHALAMANDRA_API_ALLOW_PRIVATE_HTTP=true \
       CHALAMANDRA_ACCEPTANCE_URL=http://agents-api:8766/v1/acceptance \
       CHALAMANDRA_ACCEPTANCE_TOKEN='<short-lived-token>' \
       python verifier/submit_acceptance.py
@@ -18,10 +19,12 @@ A successful 201 confirms API acceptance only. Verify webhook delivery separatel
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
 import secrets
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -137,31 +140,84 @@ def _read_decision(input_path: str) -> dict[str, Any]:
     return decision
 
 
+def _host_resolves_only_to_loopback(host: str, port: int) -> bool:
+    """Return true only when every resolved address is loopback."""
+    normalized = host.casefold().rstrip(".")
+    if normalized == "localhost":
+        return True
+    try:
+        addresses = [ipaddress.ip_address(normalized)]
+    except ValueError:
+        try:
+            records = socket.getaddrinfo(normalized, port, type=socket.SOCK_STREAM)
+            addresses = [
+                ipaddress.ip_address(record[4][0].split("%", 1)[0])
+                for record in records
+            ]
+        except (OSError, ValueError, IndexError):
+            return False
+    return bool(addresses) and all(address.is_loopback for address in addresses)
+
+
+def _host_resolves_only_to_private_addresses(host: str, port: int) -> bool:
+    """Reject public, mixed, loopback, link-local and special-use destinations."""
+    normalized = host.casefold().rstrip(".")
+    try:
+        addresses = [ipaddress.ip_address(normalized)]
+    except ValueError:
+        try:
+            records = socket.getaddrinfo(normalized, port, type=socket.SOCK_STREAM)
+            addresses = [
+                ipaddress.ip_address(record[4][0].split("%", 1)[0])
+                for record in records
+            ]
+        except (OSError, ValueError, IndexError):
+            return False
+    return bool(addresses) and all(
+        address.is_private
+        and not address.is_loopback
+        and not address.is_link_local
+        and not address.is_multicast
+        and not address.is_unspecified
+        and not address.is_reserved
+        for address in addresses
+    )
+
+
 def _validate_url(url: str) -> None:
     """
-    Valida la URL de destino del endpoint de aceptación.
+    Valida la URL de aceptación y evita enviar tokens Bearer por HTTP público.
 
-    Args:
-        url (str): URL que debe usarse para el envío autenticado de una decisión.
-
-    Returns:
-        None: Continúa sin error si pasa el contrato de destino.
-
-    Raises:
-        ValueError: Si el esquema no es HTTP/HTTPS o la ruta no termina exactamente en `/v1/acceptance`, o contiene query/fragment prohibidos.
-
-    Security:
-        Previene destinos alternos no previstos para esta herramienta; no sigas redirecciones porque podría exponerse el bearer token.
-
-    Example:
-        _validate_url("https://api.example.com/v1/acceptance")
+    HTTP se permite en loopback. Una dirección privada no-loopback exige
+    CHALAMANDRA_API_ALLOW_PRIVATE_HTTP=true y que todas las resoluciones DNS
+    pertenezcan a redes privadas no especiales. Los destinos públicos requieren HTTPS.
     """
-
     parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("acceptance_url_must_be_http_or_https")
-    if parsed.path != "/v1/acceptance" or parsed.query or parsed.fragment:
-        raise ValueError("acceptance_url_must_end_exactly_with_/v1/acceptance")
+    if (
+        parsed.username
+        or parsed.password
+        or parsed.path != "/v1/acceptance"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("acceptance_url_must_be_exact_/v1/acceptance_without_credentials_query_or_fragment")
+
+    if parsed.scheme == "http":
+        host = parsed.hostname
+        port = parsed.port or 80
+        if _host_resolves_only_to_loopback(host, port):
+            return
+        private_http_enabled = (
+            os.getenv("CHALAMANDRA_API_ALLOW_PRIVATE_HTTP", "").strip().lower()
+            == "true"
+        )
+        private_destination = _host_resolves_only_to_private_addresses(host, port)
+        if not (private_http_enabled and private_destination):
+            raise ValueError(
+                "acceptance_http_requires_loopback_or_private_network_opt_in"
+            )
 
 
 class _NoRedirect(HTTPRedirectHandler):

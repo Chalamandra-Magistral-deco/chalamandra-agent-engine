@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import pytest
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -130,3 +131,47 @@ def test_submitter_requires_bearer_token(monkeypatch, capsys):
 
     assert status == 2
     assert "CHALAMANDRA_ACCEPTANCE_TOKEN_missing" in output.err
+
+
+def test_submitter_rejects_public_plain_http_destination(monkeypatch):
+    from verifier.submit_acceptance import _validate_url
+
+    monkeypatch.delenv("CHALAMANDRA_API_ALLOW_PRIVATE_HTTP", raising=False)
+    with pytest.raises(ValueError, match="acceptance_http_requires"):
+        _validate_url("http://8.8.8.8/v1/acceptance")
+
+
+def test_submitter_requires_opt_in_for_private_plain_http(monkeypatch):
+    from verifier.submit_acceptance import _validate_url
+
+    monkeypatch.delenv("CHALAMANDRA_API_ALLOW_PRIVATE_HTTP", raising=False)
+    with pytest.raises(ValueError, match="acceptance_http_requires"):
+        _validate_url("http://10.20.30.40:8766/v1/acceptance")
+
+    monkeypatch.setenv("CHALAMANDRA_API_ALLOW_PRIVATE_HTTP", "true")
+    _validate_url("http://10.20.30.40:8766/v1/acceptance")
+
+
+def test_submitter_rejects_mixed_public_private_dns_for_http(monkeypatch):
+    import socket
+
+    from verifier.submit_acceptance import _validate_url
+
+    monkeypatch.setenv("CHALAMANDRA_API_ALLOW_PRIVATE_HTTP", "true")
+    answers = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.20.30.40", 8766)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 8766)),
+    ]
+    monkeypatch.setattr(
+        "verifier.submit_acceptance.socket.getaddrinfo",
+        lambda *_args, **_kwargs: answers,
+    )
+    with pytest.raises(ValueError, match="acceptance_http_requires"):
+        _validate_url("http://agents-api.internal:8766/v1/acceptance")
+
+
+def test_submitter_still_allows_loopback_http_and_public_https():
+    from verifier.submit_acceptance import _validate_url
+
+    _validate_url("http://127.0.0.1:8766/v1/acceptance")
+    _validate_url("https://agents.example.com/v1/acceptance")
