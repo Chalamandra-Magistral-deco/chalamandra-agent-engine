@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:v1.0-canonico
+        CATEDRALX_BASE_IMAGE: catedralx:candidate-ec3d83d2626b
     container_name: agents-api
     ports:
       - "127.0.0.1:8228:8766"
@@ -17,6 +17,7 @@ services:
     environment:
       CATEDRALX_PATH: /app/CatedralX
       PYTHONPATH: /app
+      CHALAMANDRA_API_MAX_CONCURRENCY: "64"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8766/healthz"]
       interval: 10s
@@ -38,11 +39,15 @@ services:
     environment:
       CATEDRALX_PATH: /app/CatedralX
       PYTHONPATH: /app
+      # Keep one worker until per-process health telemetry and measured load tests justify scaling out.
+      CHALAMANDRA_WORKER_PROCESSES: "1"
+      CHALAMANDRA_WORKER_POLL_INTERVAL: "0.2"
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
     depends_on:
       api:
         condition: service_healthy
+    stop_grace_period: 70s
     restart: unless-stopped
     networks: [agents_net]
 

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from api.jsonl_index import JsonlIndex
+
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -232,19 +234,14 @@ def reserve_dispatch(
         raise ValueError("lease_seconds debe ser un entero positivo")
 
     path = _events_file()
+    store = JsonlIndex(path, ("result_id", "event_id"))
     now = _now()
-    with _locked(path):
-        records = _read_all(path)
-        latest_by_result: dict[str, dict[str, Any]] = {}
-        for record in records:
-            prior_event_id = record.get("event_id")
-            prior_result_id = record.get("result_id")
-            if prior_event_id == event_id and prior_result_id != result_id:
-                raise ValueError("event_id ya está asignado a otro result_id")
-            if isinstance(prior_result_id, str):
-                latest_by_result[prior_result_id] = record
-
-        previous = latest_by_result.get(result_id)
+    with store.locked() as db:
+        event_matches = store.find(db, "event_id", event_id)
+        if any(record.get("result_id") != result_id for record in event_matches):
+            raise ValueError("event_id ya está asignado a otro result_id")
+        result_matches = store.find(db, "result_id", result_id)
+        previous = result_matches[-1] if result_matches else None
         if previous and previous.get("status") == "dispatched":
             return {
                 "status": "already_dispatched",
@@ -290,7 +287,7 @@ def reserve_dispatch(
             "occurred_at": stable_occurred_at,
             "delivered_count": 0,
         }
-        _append(path, reservation)
+        store.append(db, reservation)
         return {**reservation, "status": "reserved"}
 
 
@@ -308,9 +305,10 @@ def finish_dispatch(
     if not isinstance(delivered_count, int) or delivered_count < 0:
         raise ValueError("delivered_count debe ser entero no negativo")
     path = _events_file()
-    with _locked(path):
-        records = _read_all(path)
-        latest = next((record for record in reversed(records) if record.get("result_id") == result_id), None)
+    store = JsonlIndex(path, ("result_id", "event_id"))
+    with store.locked() as db:
+        records = store.find(db, "result_id", result_id)
+        latest = records[-1] if records else None
         if not latest or latest.get("event_id") != event_id or latest.get("status") != "dispatching":
             return False
         record = {
@@ -324,7 +322,7 @@ def finish_dispatch(
         }
         if error_code:
             record["error_code"] = str(error_code)[:80]
-        _append(path, record)
+        store.append(db, record)
         return True
 
 
@@ -350,12 +348,11 @@ def reserve_subscription_delivery(
         raise ValueError("lease_seconds debe ser un entero positivo")
 
     path = _deliveries_file()
+    store = JsonlIndex(path, ("result_id", "subscription_id"))
     now = _now()
-    with _locked(path):
-        records = _read_all(path)
-        previous = next((row for row in reversed(records)
-                         if row.get("result_id") == result_id
-                         and row.get("subscription_id") == subscription_id), None)
+    with store.locked() as db:
+        records = store.find_pair(db, result_id, subscription_id)
+        previous = records[-1] if records else None
         if previous and previous.get("status") == "delivered":
             return {**previous, "status": "already_delivered"}
         if previous and previous.get("status") == "dispatching":
@@ -376,7 +373,7 @@ def reserve_subscription_delivery(
             "status": "dispatching",
             "recorded_at": now.isoformat(),
         }
-        _append(path, reservation)
+        store.append(db, reservation)
         return {**reservation, "status": "reserved"}
 
 
@@ -392,11 +389,10 @@ def finish_subscription_delivery(
     if status not in {"delivered", "failed"}:
         raise ValueError("Estado terminal de entrega inválido")
     path = _deliveries_file()
-    with _locked(path):
-        records = _read_all(path)
-        latest = next((row for row in reversed(records)
-                       if row.get("result_id") == result_id
-                       and row.get("subscription_id") == subscription_id), None)
+    store = JsonlIndex(path, ("result_id", "subscription_id"))
+    with store.locked() as db:
+        records = store.find_pair(db, result_id, subscription_id)
+        latest = records[-1] if records else None
         if not latest or latest.get("event_id") != event_id or latest.get("status") != "dispatching":
             return False
         record = {
@@ -409,5 +405,5 @@ def finish_subscription_delivery(
         }
         if error_code:
             record["error_code"] = str(error_code)[:80]
-        _append(path, record)
+        store.append(db, record)
         return True

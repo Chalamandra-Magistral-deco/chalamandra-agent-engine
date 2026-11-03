@@ -1,6 +1,8 @@
 """Task Bus atómico usando SQLite (Fase 1 corregida)."""
 import json
+import os
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,52 +15,122 @@ def _db_path() -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
+_DB_INIT_LOCK = threading.RLock()
+_DB_READY_PATH: str | None = None
+_DB_FILES_SECURED_PATHS: set[str] = set()
+
+
 def _get_conn():
-    conn = sqlite3.connect(str(_db_path()), timeout=10)
+    path = _db_path()
+    conn = sqlite3.connect(str(path), timeout=20)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    cache_key = str(path.resolve())
+    with _DB_INIT_LOCK:
+        if cache_key not in _DB_FILES_SECURED_PATHS:
+            # Open the WAL shared-memory files once, then restrict their modes.
+            conn.execute("PRAGMA schema_version").fetchone()
+            os.chmod(path, 0o600)
+            for sidecar in (Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
+            _DB_FILES_SECURED_PATHS.add(cache_key)
     return conn
 
+
 def init_db():
-    with _get_conn() as conn:
-        # 1. Crear tabla base primero (P0-1 corregido)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id TEXT PRIMARY KEY,
-                run_id TEXT,
-                objective TEXT,
-                required_tools TEXT,
-                success_criteria TEXT,
-                status TEXT NOT NULL,
-                trace_id TEXT,
-                candidate_result TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS idempotency (
-                idempotency_key TEXT PRIMARY KEY,
-                payload_hash TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        # 2. Migración de columna payload (después de crear tabla)
-        cursor = conn.execute("PRAGMA table_info(tasks)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if "payload" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN payload TEXT")
-        if "result_id" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN result_id TEXT")
-        if "lease_until" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN lease_until TEXT")
-        if "lease_token" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN lease_token TEXT")
-        if "attempt_count" not in columns:
+    """Initialize schema once per process/path; serialize first-start migrations."""
+    global _DB_READY_PATH
+    path = _db_path()
+    cache_key = str(path.resolve())
+    with _DB_INIT_LOCK:
+        if _DB_READY_PATH == cache_key:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(path.parent, 0o700)
+        path.touch(mode=0o600, exist_ok=True)
+        os.chmod(path, 0o600)
+        conn = sqlite3.connect(str(path), timeout=30)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            for sidecar in (Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    task_id TEXT PRIMARY KEY,
+                    run_id TEXT,
+                    objective TEXT,
+                    required_tools TEXT,
+                    success_criteria TEXT,
+                    status TEXT NOT NULL,
+                    trace_id TEXT,
+                    candidate_result TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS idempotency (
+                    idempotency_key TEXT PRIMARY KEY,
+                    payload_hash TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            migrations = {
+                "payload": "ALTER TABLE tasks ADD COLUMN payload TEXT",
+                "result_id": "ALTER TABLE tasks ADD COLUMN result_id TEXT",
+                "lease_until": "ALTER TABLE tasks ADD COLUMN lease_until TEXT",
+                "lease_token": "ALTER TABLE tasks ADD COLUMN lease_token TEXT",
+                "attempt_count": (
+                    "ALTER TABLE tasks ADD COLUMN attempt_count "
+                    "INTEGER NOT NULL DEFAULT 0"
+                ),
+            }
+            for column, statement in migrations.items():
+                if column not in columns:
+                    conn.execute(statement)
+
+            # Partial indexes make queue and lease scans proportional to active work.
             conn.execute(
-                "ALTER TABLE tasks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0"
+                "CREATE INDEX IF NOT EXISTS idx_tasks_queued_created "
+                "ON tasks(created_at, task_id) WHERE status='queued'"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_running_lease "
+                "ON tasks(lease_until) "
+                "WHERE status='running' AND lease_until IS NOT NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_running_updated "
+                "ON tasks(updated_at) "
+                "WHERE status='running' AND lease_until IS NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_run_created "
+                "ON tasks(run_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_result_status "
+                "ON tasks(result_id, status)"
+            )
+            conn.commit()
+            # SQLite may create WAL/SHM during schema migration; lock them down
+            # after creation, before other workers begin using this path.
+            for sidecar in (Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+                if sidecar.exists():
+                    os.chmod(sidecar, 0o600)
+            _DB_READY_PATH = cache_key
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
     """Persist a task atomically; an idempotency key binds the complete task contract."""
@@ -146,22 +218,27 @@ def get_next_task(lease_seconds: int = 120) -> dict | None:
     with _get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
 
-        # Reclaim tasks whose worker died or whose old pre-lease claim went stale.
+        # Reclaim current leases and legacy pre-lease claims separately so both
+        # predicates can use their partial indexes. Timestamps are normalized UTC ISO-8601.
         conn.execute(
             """
             UPDATE tasks
-            SET status = 'queued',
-                lease_until = NULL,
-                lease_token = NULL,
-                updated_at = ?
+            SET status = 'queued', lease_until = NULL, lease_token = NULL, updated_at = ?
             WHERE status = 'running'
-              AND (
-                (lease_until IS NOT NULL AND julianday(lease_until) <= julianday(?))
-                OR
-                (lease_until IS NULL AND julianday(updated_at) <= julianday(?))
-              )
+              AND lease_until IS NOT NULL
+              AND lease_until <= ?
             """,
-            (now, now, stale_before),
+            (now, now),
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'queued', lease_token = NULL, updated_at = ?
+            WHERE status = 'running'
+              AND lease_until IS NULL
+              AND updated_at <= ?
+            """,
+            (now, stale_before),
         )
 
         row = conn.execute(
@@ -202,6 +279,7 @@ def mark_task_completed(
     lease_token: str | None = None,
 ) -> bool:
     """Persist a result; worker claims must present their current lease token."""
+    init_db()
     now = datetime.now(timezone.utc).isoformat()
     candidate_status = candidate_result.get("status", "failed")
 

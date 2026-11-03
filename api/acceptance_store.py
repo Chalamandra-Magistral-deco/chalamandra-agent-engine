@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from api.crypto_signer import verify_decision
+from api.jsonl_index import JsonlIndex
 
 _CANONICAL_FIELDS = (
     "decision_id", "candidate_id", "outcome", "criteria_checked", "reasons",
@@ -150,24 +151,25 @@ def record_acceptance(decision: dict[str, Any]) -> str:
     record = {key: decision[key] for key in _CANONICAL_FIELDS}
     record["signature"] = signature
     target = _acceptance_file()
-    with _locked_store(target):
-        existing_records = _read_all(target)
-        for existing in existing_records:
-            if existing.get("decision_id") == decision["decision_id"]:
-                if existing == record:
-                    return str(decision["decision_id"])
-                raise ValueError("decision_id ya existe con contenido diferente")
-            if existing.get("candidate_id") == candidate_id:
-                raise ValueError("El candidato ya tiene una decisión de aceptación registrada; use un candidato nuevo para re-revisión")
-        _append(target, record)
+    store = JsonlIndex(target, ("candidate_id", "decision_id"))
+    with store.locked() as db:
+        decision_matches = store.find(db, "decision_id", str(decision["decision_id"]))
+        for existing in decision_matches:
+            if existing == record:
+                return str(decision["decision_id"])
+            raise ValueError("decision_id ya existe con contenido diferente")
+        candidate_matches = store.find(db, "candidate_id", candidate_id)
+        if candidate_matches:
+            raise ValueError("El candidato ya tiene una decisión de aceptación registrada; use un candidato nuevo para re-revisión")
+        store.append(db, record)
     return str(decision["decision_id"])
 
 
 def get_acceptance(candidate_id: str) -> dict[str, Any] | None:
     target = _acceptance_file()
-    with _locked_store(target):
-        records = _read_all(target)
-        matches = [record for record in records if record.get("candidate_id") == candidate_id]
+    store = JsonlIndex(target, ("candidate_id", "decision_id"))
+    with store.locked() as db:
+        matches = store.find(db, "candidate_id", candidate_id)
         if not matches:
             return None
         # Reconcile only cryptographically valid duplicate records whose decision

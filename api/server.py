@@ -76,7 +76,7 @@ class EngineHTTPServer(ThreadingHTTPServer):
 
     daemon_threads = True
     allow_reuse_address = True
-    request_queue_size = 32
+    request_queue_size = 128
 
     def __init__(
         self,
@@ -93,7 +93,30 @@ class EngineHTTPServer(ThreadingHTTPServer):
         self.model_calls_enabled = model_calls_enabled
         self.master = master or Master()
         self.execution_lock = threading.Lock()
+        raw_limit = os.getenv("CHALAMANDRA_API_MAX_CONCURRENCY", "64")
+        try:
+            self.max_concurrency = int(raw_limit)
+        except ValueError as exc:
+            raise ValueError("CHALAMANDRA_API_MAX_CONCURRENCY debe ser entero") from exc
+        if not 4 <= self.max_concurrency <= 512:
+            raise ValueError("CHALAMANDRA_API_MAX_CONCURRENCY debe estar entre 4 y 512")
+        self._request_slots = threading.BoundedSemaphore(self.max_concurrency)
         super().__init__(server_address, handler_class)
+
+    def process_request(self, request, client_address):
+        # Back-pressure at accept time: never create an unbounded number of threads.
+        self._request_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 class EngineRequestHandler(BaseHTTPRequestHandler):

@@ -10,9 +10,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
-
 from api import distribution_store, subscription_store
+from api.safe_http import PinnedWebhookError, post_json
 from api.trace_parser import parse_traceparent
 
 
@@ -165,8 +164,9 @@ def dispatch_event(
                 continue
 
             error_code = None
-            if not subscription_store.is_safe_url(url):
-                error_code = "ssrf_revalidation_failed"
+            target = subscription_store.resolve_safe_url(url)
+            if target is None:
+                error_code = "ssrf_validation_failed"
                 _log_dead_letter(url, payload, error_code)
             else:
                 headers = {
@@ -181,18 +181,17 @@ def dispatch_event(
                 delivered = False
                 for attempt in range(3):
                     try:
-                        with requests.post(
-                            url,
+                        status_code = post_json(
+                            target,
                             data=data,
                             headers=headers,
                             timeout=5,
-                            allow_redirects=False,
-                        ) as response:
-                            if 200 <= response.status_code < 300:
-                                delivered = True
-                                break
-                            error_code = f"http_status_{response.status_code}"
-                    except requests.RequestException as exc:
+                        )
+                        if 200 <= status_code < 300:
+                            delivered = True
+                            break
+                        error_code = f"http_status_{status_code}"
+                    except PinnedWebhookError as exc:
                         error_code = type(exc).__name__
                     if attempt < 2:
                         time.sleep(2**attempt)

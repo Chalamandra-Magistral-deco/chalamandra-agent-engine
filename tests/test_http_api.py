@@ -14,6 +14,7 @@ import pytest
 from api.server import create_server
 from api import task_bus
 from core.master import Master
+from api.safe_http import ResolvedWebhookTarget
 
 TEST_TOKEN = "test-api-token"
 TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
@@ -389,9 +390,18 @@ def test_create_subscription_requires_write_scope_and_persists_schema(local_api,
     from api import subscription_store
 
     port, _ = local_api
-    monkeypatch.setenv("CHALAMANDRA_SSRF_ALLOW_LOCALHOST", "true")
     # This test isolates authorization and persistence; SSRF behavior is tested separately.
-    monkeypatch.setattr(subscription_store, "is_safe_url", lambda _url: True)
+    monkeypatch.setattr(
+        subscription_store,
+        "resolve_safe_url",
+        lambda _url: ResolvedWebhookTarget(
+            scheme="http",
+            hostname="webhook-sink",
+            port=8000,
+            request_target="/callback",
+            addresses=("172.23.0.5",),
+        ),
+    )
     target = tmp_path / "subscriptions.jsonl"
     monkeypatch.setattr(subscription_store, "_subs_file", lambda: target)
     payload = {
@@ -422,8 +432,17 @@ def test_delete_subscription_requires_write_scope(local_api, monkeypatch, tmp_pa
     from api import subscription_store
 
     port, _ = local_api
-    monkeypatch.setenv("CHALAMANDRA_SSRF_ALLOW_LOCALHOST", "true")
-    monkeypatch.setattr(subscription_store, "is_safe_url", lambda _url: True)
+    monkeypatch.setattr(
+        subscription_store,
+        "resolve_safe_url",
+        lambda _url: ResolvedWebhookTarget(
+            scheme="https",
+            hostname="webhook.example.test",
+            port=443,
+            request_target="/callback",
+            addresses=("93.184.216.34",),
+        ),
+    )
     target = tmp_path / "subscriptions.jsonl"
     monkeypatch.setattr(subscription_store, "_subs_file", lambda: target)
     payload = {
@@ -580,7 +599,8 @@ def test_accepted_distribution_posts_to_local_sink_with_w3c_child_span(
     monkeypatch.setenv("CHALAMANDRA_VERIFIER_PUBLIC_KEY", signing_key.verify_key.encode().hex())
     monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", verifier_id)
     monkeypatch.setenv("CHALAMANDRA_WEBHOOK_SECRET", webhook_secret)
-    monkeypatch.setenv("CHALAMANDRA_SSRF_ALLOW_LOCALHOST", "true")
+    # Permit only the exact loopback sink used by this isolated integration test.
+    monkeypatch.setenv("CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST", "127.0.0.1")
 
     candidate_id = str(uuid.uuid4())
     candidate = {

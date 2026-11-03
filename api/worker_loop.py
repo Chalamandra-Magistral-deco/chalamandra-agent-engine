@@ -2,6 +2,7 @@
 import asyncio
 import os
 import signal
+import multiprocessing
 import sys
 import json
 import time
@@ -504,10 +505,16 @@ def process_task(task: dict) -> dict:
     )
     return candidate_result
 
-def main():
-    print("Worker persistente iniciado. Procesando tareas reales...")
+def _run_worker_loop(stop_event=None):
+    """Run one independently leased worker process."""
+    poll_interval = float(os.getenv("CHALAMANDRA_WORKER_POLL_INTERVAL", "0.2"))
+    if not 0.05 <= poll_interval <= 10:
+        raise ValueError("CHALAMANDRA_WORKER_POLL_INTERVAL debe estar entre 0.05 y 10")
+    task_bus.init_db()
+    print(f"Worker persistente iniciado pid={os.getpid()} poll={poll_interval}s")
     write_worker_heartbeat("idle")
-    while True:
+
+    while stop_event is None or not stop_event.is_set():
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task()
         if task:
@@ -524,17 +531,79 @@ def main():
                     lease_token=task.get("lease_token"),
                 )
                 print(f"[worker] task {task['task_id']} timeout 60s -> failed")
-            except Exception as e:
+            except Exception as exc:
                 task_bus.mark_task_completed(
                     task["task_id"],
-                    {"status": "failed", "reason": f"worker_exception: {e}"},
+                    {"status": "failed", "reason": f"worker_exception: {exc}"},
                     None,
                     lease_token=task.get("lease_token"),
                 )
-                print(f"[worker] task {task['task_id']} exception -> failed: {e}")
+                print(f"[worker] task {task['task_id']} exception -> failed: {exc}")
             finally:
                 signal.alarm(0)
-        time.sleep(2)
+            # Do not sleep after useful work; immediately claim the next task.
+            continue
+
+        if stop_event is None:
+            time.sleep(poll_interval)
+        else:
+            stop_event.wait(poll_interval)
+
+
+def main():
+    raw_count = os.getenv("CHALAMANDRA_WORKER_PROCESSES", "1")
+    try:
+        process_count = int(raw_count)
+    except ValueError as exc:
+        raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe ser entero") from exc
+    if not 1 <= process_count <= 16:
+        raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe estar entre 1 y 16")
+
+    if process_count == 1:
+        _run_worker_loop()
+        return
+
+    context = multiprocessing.get_context("spawn")
+    stop_event = context.Event()
+    children = {}
+
+    def spawn_worker(slot):
+        process = context.Process(
+            target=_run_worker_loop,
+            args=(stop_event,),
+            name=f"chalamandra-worker-{slot}",
+        )
+        process.start()
+        children[slot] = process
+
+    def request_stop(signum, frame):
+        stop_event.set()
+
+    previous_handlers = {
+        signum: signal.signal(signum, request_stop)
+        for signum in (signal.SIGTERM, signal.SIGINT)
+    }
+    try:
+        for slot in range(process_count):
+            spawn_worker(slot)
+        while not stop_event.wait(0.5):
+            for slot, process in list(children.items()):
+                if process.exitcode is not None:
+                    process.join()
+                    del children[slot]
+                    if not stop_event.is_set():
+                        print(f"[worker-supervisor] restarting slot={slot} exit={process.exitcode}")
+                        spawn_worker(slot)
+    finally:
+        stop_event.set()
+        for process in children.values():
+            process.join(timeout=65)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
 
 if __name__ == "__main__":
     main()

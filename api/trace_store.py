@@ -5,11 +5,15 @@ import fcntl
 import json
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _LOCK = threading.Lock()
+_LAST_SYNC = 0.0
+_SYNC_INTERVAL_SECONDS = 1.0
+_TRACE_TARGET_READY: str | None = None
 
 
 def _trace_file() -> Path:
@@ -67,15 +71,30 @@ def record_request(
         "client_ip": client_ip,
     }
     target = _trace_file()
-    target.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(
         record, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     ) + "\n"
-    with _LOCK, target.open("a", encoding="utf-8") as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        try:
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-        finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    global _LAST_SYNC, _TRACE_TARGET_READY
+    target_key = str(target.resolve())
+    with _LOCK:
+        # Apply private directory/file permissions once per process and target path,
+        # not on every request in the hot logging path.
+        if _TRACE_TARGET_READY != target_key:
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(target.parent, 0o700)
+            target.touch(mode=0o600, exist_ok=True)
+            os.chmod(target, 0o600)
+            _TRACE_TARGET_READY = target_key
+        with target.open("a", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                stream.write(encoded)
+                stream.flush()
+                now = time.monotonic()
+                # Traces are operational telemetry, not the acceptance/evidence ledger.
+                # Bound sync cost while retaining periodic durable flushes.
+                if now - _LAST_SYNC >= _SYNC_INTERVAL_SECONDS:
+                    os.fsync(stream.fileno())
+                    _LAST_SYNC = now
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
