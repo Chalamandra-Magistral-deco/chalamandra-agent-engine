@@ -86,8 +86,12 @@ class OllamaCloudAdapter(ModelAdapter):
         """
         start_ms = self._now_ms()
 
-        messages: list[dict[str, Any]] = request.messages or []
-        if request.messages is None:
+        messages: list[dict[str, Any]] = (
+            [dict(message) for message in request.messages]
+            if request.messages
+            else []
+        )
+        if not messages:
             if request.system_prompt:
                 messages.append({"role": "system", "content": request.system_prompt})
             messages.append({"role": "user", "content": request.prompt})
@@ -164,19 +168,32 @@ class OllamaCloudAdapter(ModelAdapter):
                     start_ms,
                 )
 
-            tokens_in = int(data.get("prompt_eval_count") or 0)
-            tokens_out = int(data.get("eval_count") or 0)
+            usage_complete = (
+                isinstance(data.get("prompt_eval_count"), int)
+                and not isinstance(data.get("prompt_eval_count"), bool)
+                and data["prompt_eval_count"] >= 0
+                and isinstance(data.get("eval_count"), int)
+                and not isinstance(data.get("eval_count"), bool)
+                and data["eval_count"] >= 0
+            )
+            tokens_in = data["prompt_eval_count"] if usage_complete else 0
+            tokens_out = data["eval_count"] if usage_complete else 0
             estimated_cost = (
-                tokens_in * self.input_price_per_million
-                + tokens_out * self.output_price_per_million
-            ) / 1_000_000
+                (
+                    tokens_in * self.input_price_per_million
+                    + tokens_out * self.output_price_per_million
+                ) / 1_000_000
+                if usage_complete
+                else None
+            )
 
             raw_response = dict(data)
             raw_response["chalamandra_cost_estimate"] = {
                 "currency": "USD",
-                "estimated": True,
-                "usage_complete": (
-                    "prompt_eval_count" in data and "eval_count" in data
+                "estimated": usage_complete,
+                "usage_complete": usage_complete,
+                "unavailable_reason": (
+                    None if usage_complete else "provider_usage_counters_missing_or_invalid"
                 ),
                 "input_price_usd_per_million": self.input_price_per_million,
                 "output_price_usd_per_million": self.output_price_per_million,
