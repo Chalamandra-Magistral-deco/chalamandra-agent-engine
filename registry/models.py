@@ -87,6 +87,28 @@ MODELS: dict[str, ModelInfo] = {
     ),
 
     # -----------------------------------------------------------------------
+    # Ollama Cloud (opt-in; capacidades declaradas, no verificadas localmente)
+    # -----------------------------------------------------------------------
+    "ollama_cloud": ModelInfo(
+        name="ollama_cloud",
+        provider="ollama",
+        local=False,
+        versions=["deepseek-v4.1-flash"],
+        skills_claimed={
+            "reasoning",
+            "analysis",
+            "coding",
+            "vision",
+        },
+        evidence={
+            "note": (
+                "Ollama Cloud; adapter separado de Ollama local. "
+                "Sin benchmark local ni skills verificadas."
+            ),
+        },
+    ),
+
+    # -----------------------------------------------------------------------
     # Modelos en la nube (estructura presente, sin ejecutar)
     # -----------------------------------------------------------------------
     "gemini": ModelInfo(
