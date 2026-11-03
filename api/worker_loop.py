@@ -496,7 +496,12 @@ def process_task(task: dict) -> dict:
     }
     # Save the candidate and expose its identifier through the task status.
     candidate_store.save_candidate(candidate_result)
-    task_bus.mark_task_completed(task_id, candidate_result, result_id=task_result_id)
+    completion_options = {}
+    if task.get("lease_token") is not None:
+        completion_options["lease_token"] = task["lease_token"]
+    task_bus.mark_task_completed(
+        task_id, candidate_result, result_id=task_result_id, **completion_options
+    )
     return candidate_result
 
 def main():
@@ -516,6 +521,7 @@ def main():
                     task["task_id"],
                     {"status": "failed", "reason": "timeout_60s"},
                     None,
+                    lease_token=task.get("lease_token"),
                 )
                 print(f"[worker] task {task['task_id']} timeout 60s -> failed")
             except Exception as e:
@@ -523,6 +529,7 @@ def main():
                     task["task_id"],
                     {"status": "failed", "reason": f"worker_exception: {e}"},
                     None,
+                    lease_token=task.get("lease_token"),
                 )
                 print(f"[worker] task {task['task_id']} exception -> failed: {e}")
             finally:

@@ -27,7 +27,7 @@ def test_financial_task_preserves_catedralx_result_id(monkeypatch):
         lambda candidate: saved_candidates.append(candidate),
     )
 
-    def fake_mark_task_completed(task_id, candidate_result, result_id=None):
+    def fake_mark_task_completed(task_id, candidate_result, result_id=None, lease_token=None):
         completion_calls.append({
             "task_id": task_id,
             "candidate_result": candidate_result,
