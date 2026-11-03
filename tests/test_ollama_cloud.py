@@ -186,3 +186,92 @@ def test_cloud_adapter_registers_only_with_explicit_opt_in(monkeypatch):
         "reasoning",
         only_verified=True,
     )
+
+
+
+def test_cloud_adapter_falls_back_to_prompt_for_empty_messages(monkeypatch):
+    _CAPTURED.clear()
+    monkeypatch.setattr("adapters.ollama_cloud.httpx.AsyncClient", _FakeAsyncClient)
+    adapter = OllamaCloudAdapter(api_key="test-secret")
+    request = ModelRequest(
+        prompt="Usa el prompt canónico",
+        system_prompt="Sistema canónico",
+        messages=[],
+    )
+
+    response = asyncio.run(adapter.generate(request))
+
+    assert response.status == ModelStatus.OK
+    assert _CAPTURED[0]["json"]["messages"] == [
+        {"role": "system", "content": "Sistema canónico"},
+        {"role": "user", "content": "Usa el prompt canónico"},
+    ]
+
+
+class _MissingUsageResponse(_FakeResponse):
+    def json(self) -> dict:
+        return {
+            "model": "deepseek-v4.1-flash",
+            "message": {"role": "assistant", "content": "Respuesta sin métricas"},
+        }
+
+
+class _MissingUsageClient(_FakeAsyncClient):
+    async def post(self, url: str, *, headers: dict, json: dict):
+        _CAPTURED.append({"url": url, "headers": headers, "json": json})
+        return _MissingUsageResponse()
+
+
+def test_cloud_adapter_never_reports_missing_usage_as_free(monkeypatch):
+    monkeypatch.setattr(
+        "adapters.ollama_cloud.httpx.AsyncClient",
+        _MissingUsageClient,
+    )
+    adapter = OllamaCloudAdapter(api_key="test-secret")
+
+    response = asyncio.run(adapter.generate(ModelRequest(prompt="Prueba")))
+
+    assert response.status == ModelStatus.OK
+    assert response.tokens_in == 0
+    assert response.tokens_out == 0
+    assert response.cost_usd is None
+    assert response.raw["chalamandra_cost_estimate"]["estimated"] is False
+    assert response.raw["chalamandra_cost_estimate"]["usage_complete"] is False
+    assert (
+        response.raw["chalamandra_cost_estimate"]["unavailable_reason"]
+        == "provider_usage_counters_missing_or_invalid"
+    )
+
+
+def test_cloud_adapter_rejects_invalid_tool_call_shape(monkeypatch):
+    class InvalidToolResponse(_FakeResponse):
+        def json(self) -> dict:
+            return {
+                "model": "deepseek-v4.1-flash",
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "", "arguments": []}},
+                        {"function": {"name": "valid_read", "arguments": {"scope": "read"}}},
+                    ],
+                },
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    class InvalidToolClient(_FakeAsyncClient):
+        async def post(self, url: str, *, headers: dict, json: dict):
+            return InvalidToolResponse()
+
+    monkeypatch.setattr(
+        "adapters.ollama_cloud.httpx.AsyncClient",
+        InvalidToolClient,
+    )
+    adapter = OllamaCloudAdapter(api_key="test-secret")
+    response = asyncio.run(adapter.generate(ModelRequest(prompt="Prueba")))
+
+    assert response.status == ModelStatus.OK
+    assert response.tool_calls == [
+        {"name": "valid_read", "arguments": {"scope": "read"}}
+    ]
