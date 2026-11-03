@@ -157,8 +157,11 @@ class OllamaCloudAdapter(ModelAdapter):
                 function = call.get("function", {}) if isinstance(call, dict) else {}
                 name = function.get("name")
                 arguments = function.get("arguments", {})
-                if isinstance(name, str) and isinstance(arguments, dict):
-                    tool_calls.append({"name": name, "arguments": arguments})
+                normalized_name = name.strip() if isinstance(name, str) else ""
+                if normalized_name and isinstance(arguments, dict):
+                    tool_calls.append(
+                        {"name": normalized_name, "arguments": arguments}
+                    )
 
             if not output and not tool_calls:
                 return self._error_response(
