@@ -139,7 +139,7 @@ class ModelResponse(BaseModel):
     confidence_self_reported: float | None = None
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
     latency_ms: int = 0
     status: ModelStatus = ModelStatus.OK
     errors: list[str] = Field(default_factory=list)
