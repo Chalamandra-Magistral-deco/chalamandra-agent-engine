@@ -252,7 +252,9 @@ def test_cloud_adapter_rejects_invalid_tool_call_shape(monkeypatch):
                     "role": "assistant",
                     "content": "",
                     "tool_calls": [
-                        {"function": {"name": "", "arguments": []}},
+                        {"function": {"name": "", "arguments": {}}},
+                        {"function": {"name": "   ", "arguments": {"scope": "read"}}},
+                        {"function": {"name": "bad_arguments", "arguments": []}},
                         {"function": {"name": "valid_read", "arguments": {"scope": "read"}}},
                     ],
                 },
