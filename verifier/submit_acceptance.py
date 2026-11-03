@@ -150,10 +150,14 @@ def _host_resolves_only_to_loopback(host: str, port: int) -> bool:
     except ValueError:
         try:
             records = socket.getaddrinfo(normalized, port, type=socket.SOCK_STREAM)
-            addresses = [
-                ipaddress.ip_address(record[4][0].split("%", 1)[0])
-                for record in records
-            ]
+            addresses = []
+            for record in records:
+                raw_address = record[4][0]
+                if not isinstance(raw_address, str):
+                    return False
+                addresses.append(
+                    ipaddress.ip_address(raw_address.split("%", 1)[0])
+                )
         except (OSError, ValueError, IndexError):
             return False
     return bool(addresses) and all(address.is_loopback for address in addresses)
@@ -167,10 +171,14 @@ def _host_resolves_only_to_private_addresses(host: str, port: int) -> bool:
     except ValueError:
         try:
             records = socket.getaddrinfo(normalized, port, type=socket.SOCK_STREAM)
-            addresses = [
-                ipaddress.ip_address(record[4][0].split("%", 1)[0])
-                for record in records
-            ]
+            addresses = []
+            for record in records:
+                raw_address = record[4][0]
+                if not isinstance(raw_address, str):
+                    return False
+                addresses.append(
+                    ipaddress.ip_address(raw_address.split("%", 1)[0])
+                )
         except (OSError, ValueError, IndexError):
             return False
     return bool(addresses) and all(
