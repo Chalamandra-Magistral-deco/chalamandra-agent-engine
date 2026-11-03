@@ -1,23 +1,32 @@
 """Isolated integration test for CatedralX economic proposals -> Agents worker -> acceptance gate."""
 from __future__ import annotations
 
+import hmac
 import http.client
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-import subprocess
 
 import jwt
 import pytest
 from nacl.signing import SigningKey
 
-from api import acceptance_store, candidate_store, subscription_store, task_bus, worker_loop
+from api import (
+    acceptance_store,
+    candidate_store,
+    distribution_store,
+    subscription_store,
+    task_bus,
+    webhook_dispatcher,
+    worker_loop,
+)
 from api.server import create_server
 
 _default_catedralx_root = Path(__file__).resolve().parents[2] / "CatedralX"
@@ -260,7 +269,11 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
     monkeypatch.delenv("CHALAMANDRA_HMAC_SECRET", raising=False)
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
     monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
-    for store in (acceptance_store, candidate_store, subscription_store, task_bus):
+    monkeypatch.setenv("CHALAMANDRA_WEBHOOK_SECRET", "isolated-webhook-secret-at-least-32-bytes")
+    monkeypatch.setenv("CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST", "127.0.0.1")
+    for store in (
+        acceptance_store, candidate_store, distribution_store, subscription_store, task_bus
+    ):
         monkeypatch.setattr(store, "_state_dir", lambda: tmp_path)
 
     dispatch_spec = importlib.util.spec_from_file_location(
@@ -316,6 +329,33 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
     assert scanner_spec and scanner_spec.loader
     cycle_scanner = importlib.util.module_from_spec(scanner_spec)
     scanner_spec.loader.exec_module(cycle_scanner)
+
+    webhook_receipts: list[dict] = []
+
+    class LocalWebhookReceiver(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            webhook_receipts.append({
+                "payload": payload,
+                "signature": self.headers.get("X-Chalamandra-Signature"),
+                "trace_id": self.headers.get("X-Trace-Id"),
+                "traceparent": self.headers.get("traceparent"),
+            })
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    receiver = ThreadingHTTPServer(("127.0.0.1", 0), LocalWebhookReceiver)
+    receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+    receiver_thread.start()
+    subscription = subscription_store.create_subscription(
+        f"http://127.0.0.1:{receiver.server_address[1]}/synthetic-webhook",
+        ["result.accepted"],
+    )
 
     server = create_server("127.0.0.1", 0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -442,6 +482,48 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         assert status == 201
         assert accepted["outcome"] == "accepted"
 
+        # Exercise the real pinned-IP webhook transport against a loopback-only
+        # receiver. The test allowlist is exact and never opens public egress.
+        assert len(webhook_receipts) == 1
+        receipt = webhook_receipts[0]
+        assert receipt["payload"]["result_id"] == candidate["candidate_id"]
+        assert receipt["payload"]["event_type"] == "result.accepted"
+        assert receipt["payload"]["trace_id"] == candidate["trace_id"]
+        assert receipt["trace_id"] == candidate["trace_id"]
+        assert isinstance(receipt["traceparent"], str)
+        assert receipt["traceparent"].startswith(f"00-{candidate['trace_id']}-")
+        assert hmac.compare_digest(
+            receipt["signature"], webhook_dispatcher._sign_payload(receipt["payload"])
+        )
+
+        # The internal distribution route is idempotent after the accepted
+        # event was delivered; it must not notify the subscriber twice.
+        publish_jwt = jwt.encode(
+            {
+                "scope": "results:publish",
+                "exp": int(time.time()) + 120,
+                "sub": "catedralx-service",
+            },
+            service_secret,
+            algorithm="HS256",
+        )
+        status, replay_delivery = post_json(
+            "/internal/v1/distributions",
+            publish_jwt,
+            {"result_id": candidate["candidate_id"], "event_type": "result.accepted"},
+        )
+        assert status == 202
+        assert replay_delivery["status"] == "dispatched"
+        assert replay_delivery["delivered_count"] == 1
+        assert len(webhook_receipts) == 1
+
+        event_rows = distribution_store._read_all(distribution_store._events_file())
+        delivery_rows = distribution_store._read_all(distribution_store._deliveries_file())
+        assert event_rows[-1]["status"] == "dispatched"
+        assert event_rows[-1]["delivered_count"] == 1
+        assert delivery_rows[-1]["status"] == "delivered"
+        assert delivery_rows[-1]["subscription_id"] == subscription["subscription_id"]
+
         job_jwt = jwt.encode(
             {
                 "scope": "jobs:read",
@@ -504,3 +586,6 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+        receiver.shutdown()
+        receiver.server_close()
+        receiver_thread.join(timeout=2)
