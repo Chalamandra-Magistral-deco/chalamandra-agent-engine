@@ -5,12 +5,14 @@ from adapters.deepseek import DeepSeekAdapter
 from adapters.gemini import GeminiAdapter
 from adapters.gpt import GPTAdapter
 from adapters.ollama import OllamaAdapter
+from adapters.ollama_cloud import OllamaCloudAdapter
 from registry.models import MODELS
 
 
 def test_registry_versions_match_adapter_defaults():
     adapters = {
         "ollama": OllamaAdapter,
+        "ollama_cloud": OllamaCloudAdapter,
         "gemini": GeminiAdapter,
         "gpt": GPTAdapter,
         "claude": ClaudeAdapter,

@@ -8,6 +8,7 @@ import os
 
 from adapters.base import ModelRequest, ModelResponse, Skill
 from adapters.ollama import OllamaAdapter
+from adapters.ollama_cloud import OllamaCloudAdapter
 from adapters.gemini import GeminiAdapter
 from adapters.deepseek import DeepSeekAdapter
 from adapters.gpt import GPTAdapter
@@ -108,6 +109,22 @@ class Orchestrator:
         self.adapters: dict[str, object] = {
             "ollama": OllamaAdapter(),
         }
+
+        # La nube permanece apagada salvo activación explícita. La mera presencia
+        # de OLLAMA_API_KEY nunca altera el enrutamiento ni inicia llamadas remotas.
+        cloud_enabled = os.getenv("OLLAMA_CLOUD_ENABLED", "false").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        if cloud_enabled:
+            ollama_cloud_key = _load_optional_secret(
+                "OLLAMA_API_KEY", self.credential_status
+            )
+            if ollama_cloud_key:
+                self.adapters["ollama_cloud"] = OllamaCloudAdapter(
+                    api_key=ollama_cloud_key
+                )
+        else:
+            self.credential_status["OLLAMA_API_KEY"] = "disabled"
 
         gemini_key = _load_optional_secret(
             "GEMINI_API_KEY", self.credential_status

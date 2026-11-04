@@ -57,12 +57,30 @@ Ollama es el único adaptador verificado por la suite local actual. Para habilit
 - `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`: activación y selección de Anthropic.
 - `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`: activación y selección de DeepSeek.
 - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: endpoint y modelo local.
+- `OLLAMA_CLOUD_ENABLED`: opt-in explícito para registrar Ollama Cloud; por defecto `false`.
+- `OLLAMA_API_KEY`, `OLLAMA_CLOUD_MODEL`: credencial y modelo de Ollama Cloud (por defecto `deepseek-v4.1-flash`).
+- `OLLAMA_CLOUD_INPUT_USD_PER_MILLION`, `OLLAMA_CLOUD_OUTPUT_USD_PER_MILLION`: precios configurables para estimar el coste; los defaults son $0.30/$1.20 USD por millón de tokens de entrada/salida y no descuentan tokens en caché.
 - `DEFAULT_TIMEOUT_SECONDS`, `DEFAULT_MAX_TOKENS`: valores iniciales de cada `ModelRequest`; los valores explícitos de una solicitud prevalecen.
 - `CHALAMANDRA_SEARCH_TERMS_DIR`: raíz permitida para CSV de minería. La herramienta es de solo lectura y solo propone candidatos; no modifica campañas.
 - `AZURE_KEYVAULT_URI`: necesaria si se llama al helper de Key Vault directamente.
 - `CHALAMANDRA_API_HOST`, `CHALAMANDRA_API_PORT`: la API solo permite loopback; por defecto `127.0.0.1:8766`.
 - `CHALAMANDRA_API_TOKEN`: token bearer para los POST y para todas las rutas cuando se configura.
 - `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Para activar planificación/ejecución de tareas exige además un token.
+
+### Ollama Cloud (opcional)
+
+El adaptador `ollama_cloud` está separado de `OllamaAdapter`, que sigue siendo local.
+Para registrarlo se requieren ambos valores: `OLLAMA_CLOUD_ENABLED=true` y
+`OLLAMA_API_KEY`. La sola presencia de la clave no activa el proveedor ni altera
+el enrutamiento. El modelo predeterminado de la API es `deepseek-v4.1-flash`
+(la etiqueta de CLI es `deepseek-v4.1-flash:cloud`).
+
+El adaptador usa `https://ollama.com/api/chat`, no reintenta solicitudes facturables
+y devuelve las llamadas a herramientas como propuestas sujetas a la validación del host.
+El coste en `ModelResponse.cost_usd` es una estimación calculada con los contadores
+de tokens reportados y los precios configurados; no se aplica descuento de caché.
+Sus skills permanecen como declaradas/no verificadas hasta contar con benchmarks propios.
+Las pruebas unitarias simulan HTTP y no consumen inferencia cloud.
 
 ## API operativa local
 
