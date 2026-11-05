@@ -1,11 +1,11 @@
 services:
   api:
-    image: agents-api:latest
+    image: agents-api:candidate-069345ee7d37
     build:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:candidate-ec3d83d2626b
+        CATEDRALX_BASE_IMAGE: catedralx:v1.0-canonico
     container_name: agents-api
     ports:
       - "127.0.0.1:8228:8766"
@@ -28,11 +28,12 @@ services:
     networks: [agents_net]
 
   worker:
+    image: agents-worker:candidate-069345ee7d37
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
       args:
-        AGENTS_BASE_IMAGE: agents-api:latest
+        AGENTS_BASE_IMAGE: agents-api:candidate-069345ee7d37
     container_name: agents-worker
     env_file:
       - config/.env
