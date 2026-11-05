@@ -2,6 +2,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from api import worker_loop
 
 
@@ -389,3 +391,39 @@ def test_authorized_business_proposal_fails_closed_without_approval(monkeypatch)
     assert result["evidence"] == []
     assert saved[0]["status"] == "blocked"
     assert completed[0]["status"] == "blocked"
+
+
+def test_stale_lease_does_not_publish_candidate(monkeypatch):
+    saved_candidates = []
+    monkeypatch.setattr(
+        worker_loop, "_run_catedralx",
+        lambda payload: {
+            "result_id": "stale-lease-result",
+            "status": "ACCEPTED",
+            "decision": "hold",
+            "orders_created": False,
+            "orders_executed": False,
+        },
+    )
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda *args, **kwargs: False,
+    )
+
+    with pytest.raises(RuntimeError, match="lease is missing, invalid, or expired"):
+        worker_loop.process_task({
+            "task_id": "stale-lease-worker-test",
+            "objective": "financial_analysis",
+            "payload": json.dumps({
+                "historical_prices": [1.10, 1.11, 1.12],
+                "current_price": 1.13,
+            }),
+            "trace_id": "trace-stale-lease-worker-test",
+            "lease_token": "expired-worker-lease",
+        })
+
+    assert saved_candidates == []

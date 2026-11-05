@@ -138,3 +138,30 @@ def test_legacy_running_task_without_lease_is_recovered_when_stale(isolated_db):
     assert recovered["status"] == "running"
     assert recovered["attempt_count"] == 1
     assert recovered["lease_token"]
+
+
+def test_task_completion_requires_current_unexpired_lease(isolated_db):
+    task_id = task_bus.enqueue_task({"objective": "lease is mandatory"})
+    claim = task_bus.get_next_task(lease_seconds=120)
+    assert claim is not None and claim["task_id"] == task_id
+
+    assert task_bus.mark_task_completed(
+        task_id, {"status": "candidate"}
+    ) is False
+    assert task_bus.get_task_status(task_id)["status"] == "running"
+
+    with pytest.raises(ValueError, match="candidate status"):
+        task_bus.mark_task_completed(
+            task_id, {"status": "accepted"}, lease_token=claim["lease_token"]
+        )
+    assert task_bus.get_task_status(task_id)["status"] == "running"
+
+    with task_bus._get_conn() as conn:
+        conn.execute(
+            "UPDATE tasks SET lease_until = '2000-01-01T00:00:00+00:00' WHERE task_id = ?",
+            (task_id,),
+        )
+    assert task_bus.mark_task_completed(
+        task_id, {"status": "candidate"}, lease_token=claim["lease_token"]
+    ) is False
+    assert task_bus.get_task_status(task_id)["status"] == "running"
