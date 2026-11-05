@@ -90,6 +90,12 @@ def init_db():
                     published_at TEXT
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+            """)
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
             }
@@ -135,6 +141,48 @@ def init_db():
                 "ON candidate_publications(created_at, task_id) "
                 "WHERE status='pending'"
             )
+
+            # One-time backfill: recover terminal task results written before the
+            # transactional outbox existed. Results without candidate IDs are not
+            # candidate artifacts and remain only in the task history.
+            migration_version = "candidate_publication_outbox_v1"
+            migration_done = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?",
+                (migration_version,),
+            ).fetchone()
+            if not migration_done:
+                legacy_rows = conn.execute(
+                    "SELECT task_id, candidate_result, created_at, updated_at "
+                    "FROM tasks WHERE candidate_result IS NOT NULL "
+                    "AND status NOT IN ('queued', 'running')"
+                ).fetchall()
+                migration_now = datetime.now(timezone.utc).isoformat()
+                for legacy_row in legacy_rows:
+                    try:
+                        legacy_candidate = json.loads(legacy_row[1])
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise ValueError(
+                            "legacy task candidate_result contains invalid JSON"
+                        ) from exc
+                    if not isinstance(legacy_candidate, dict):
+                        raise ValueError("legacy task candidate_result must be an object")
+                    legacy_candidate_id = legacy_candidate.get("candidate_id")
+                    if isinstance(legacy_candidate_id, str) and legacy_candidate_id.strip():
+                        conn.execute(
+                            "INSERT OR IGNORE INTO candidate_publications "
+                            "(task_id, candidate_id, candidate_result, status, created_at) "
+                            "VALUES (?, ?, ?, 'pending', ?)",
+                            (
+                                legacy_row[0],
+                                legacy_candidate_id,
+                                legacy_row[1],
+                                legacy_row[3] or legacy_row[2] or migration_now,
+                            ),
+                        )
+                conn.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (migration_version, migration_now),
+                )
             conn.commit()
             # SQLite may create WAL/SHM during schema migration; lock them down
             # after creation, before other workers begin using this path.
