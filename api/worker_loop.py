@@ -495,14 +495,20 @@ def process_task(task: dict) -> dict:
         "orders_created": False,
         "orders_executed": False,
     }
-    # Save the candidate and expose its identifier through the task status.
-    candidate_store.save_candidate(candidate_result)
+    # The SQLite task row is authoritative: a candidate is publishable to the
+    # append-only candidate store only after its current, unexpired lease wins.
     completion_options = {}
     if task.get("lease_token") is not None:
         completion_options["lease_token"] = task["lease_token"]
-    task_bus.mark_task_completed(
+    completion_recorded = task_bus.mark_task_completed(
         task_id, candidate_result, result_id=task_result_id, **completion_options
     )
+    if completion_recorded is False:
+        raise RuntimeError(
+            "candidate completion rejected: worker lease is missing, invalid, or expired; "
+            "candidate was not published"
+        )
+    candidate_store.save_candidate(candidate_result)
     return candidate_result
 
 def _run_worker_loop(stop_event=None):
@@ -515,6 +521,13 @@ def _run_worker_loop(stop_event=None):
     write_worker_heartbeat("idle")
 
     while stop_event is None or not stop_event.is_set():
+        publication_report = candidate_store.reconcile_pending_publications()
+        if publication_report["published"]:
+            print(
+                "[worker] candidate publications reconciled "
+                f"recovered={publication_report['recovered']} "
+                f"already_present={publication_report['already_present']}"
+            )
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task()
         if task:

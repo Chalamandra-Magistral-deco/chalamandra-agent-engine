@@ -349,9 +349,19 @@ def test_internal_run_status_requires_orchestration_read_scope(local_api, monkey
 
 def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypatch):
     port, _ = local_api
-    payload = {"candidate_id": "candidate-internal-1", "status": "candidate", "trace_id": "trace-internal-1"}
+    payload = {
+        "candidate_id": "candidate-internal-1",
+        "status": "candidate",
+        "trace_id": "trace-internal-1",
+        "lease_token": "lease-test-token",
+    }
     calls = []
-    monkeypatch.setattr(task_bus, "mark_task_completed", lambda task_id, body: calls.append((task_id, body)))
+
+    def fake_complete(task_id, body, result_id=None, lease_token=None):
+        calls.append((task_id, body, lease_token))
+        return True
+
+    monkeypatch.setattr(task_bus, "mark_task_completed", fake_complete)
 
     status, result = request(
         port,
@@ -374,6 +384,30 @@ def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypat
     assert status == 401
     assert calls == []
 
+    without_lease = {key: value for key, value in payload.items() if key != "lease_token"}
+    status, result = request(
+        port,
+        "/internal/v1/tasks/task-internal-1/results",
+        method="POST",
+        payload=without_lease,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "lease_token_required"
+    assert calls == []
+
+    invalid_state = {**payload, "status": "accepted"}
+    status, result = request(
+        port,
+        "/internal/v1/tasks/task-internal-1/results",
+        method="POST",
+        payload=invalid_state,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "invalid_candidate_status"
+    assert calls == []
+
     status, result = request(
         port,
         "/internal/v1/tasks/task-internal-1/results",
@@ -383,7 +417,22 @@ def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypat
     )
     assert status == 202
     assert result["candidate_id"] == "candidate-internal-1"
-    assert calls == [("task-internal-1", payload)]
+    assert calls == [(
+        "task-internal-1",
+        {key: value for key, value in payload.items() if key != "lease_token"},
+        "lease-test-token",
+    )]
+
+    monkeypatch.setattr(task_bus, "mark_task_completed", lambda *args, **kwargs: False)
+    status, result = request(
+        port,
+        "/internal/v1/tasks/task-internal-1/results",
+        method="POST",
+        payload=payload,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 409
+    assert result["error"] == "task_lease_invalid_or_expired"
 
 
 def test_create_subscription_requires_write_scope_and_persists_schema(local_api, monkeypatch, tmp_path):

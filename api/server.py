@@ -696,14 +696,31 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
             task_id = path.split("/")[-2]
             body = self._read_json_body()
-            if not body:
+            if not isinstance(body, dict) or not body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
-            task_bus.mark_task_completed(task_id, body)
+            lease_token = body.get("lease_token")
+            candidate_result = {key: value for key, value in body.items() if key != "lease_token"}
+            if not isinstance(lease_token, str) or not lease_token.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "lease_token_required"})
+                return
+            if candidate_result.get("status") not in {"candidate", "blocked", "failed"}:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_status"})
+                return
+            try:
+                completed = task_bus.mark_task_completed(
+                    task_id, candidate_result, lease_token=lease_token
+                )
+            except (TypeError, ValueError):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_result"})
+                return
+            if not completed:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "task_lease_invalid_or_expired"})
+                return
             self._send_json(HTTPStatus.ACCEPTED, {
-                "candidate_id": body.get("candidate_id"),
+                "candidate_id": candidate_result.get("candidate_id"),
                 "verification_status": "pending",
-                "trace_id": body.get("trace_id")
+                "trace_id": candidate_result.get("trace_id")
             })
             return
 
