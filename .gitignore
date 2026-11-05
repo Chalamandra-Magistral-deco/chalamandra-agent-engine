@@ -17,3 +17,5 @@ logs/
 tasks.db
 tasks.db-*
 .venv_DEPRECATED_*/
+
+.venv_test/
