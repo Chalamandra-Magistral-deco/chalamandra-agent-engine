@@ -16,3 +16,4 @@ logs/
 *.bak-heartbeat-*
 tasks.db
 tasks.db-*
+.venv_DEPRECATED_*/
