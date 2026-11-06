@@ -62,6 +62,7 @@ def init_db():
                     task_id TEXT PRIMARY KEY,
                     run_id TEXT,
                     objective TEXT,
+                    product_code TEXT,
                     required_tools TEXT,
                     success_criteria TEXT,
                     status TEXT NOT NULL,
@@ -84,6 +85,7 @@ def init_db():
             }
             migrations = {
                 "payload": "ALTER TABLE tasks ADD COLUMN payload TEXT",
+                "product_code": "ALTER TABLE tasks ADD COLUMN product_code TEXT",
                 "result_id": "ALTER TABLE tasks ADD COLUMN result_id TEXT",
                 "lease_until": "ALTER TABLE tasks ADD COLUMN lease_until TEXT",
                 "lease_token": "ALTER TABLE tasks ADD COLUMN lease_token TEXT",
@@ -144,6 +146,9 @@ def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
         "success_criteria": contract.get("success_criteria", []),
         "payload": contract.get("payload", {}),
     }
+    # Preserve the pre-product idempotency digest for every existing caller.
+    if contract.get("product_code") is not None:
+        stable_contract["product_code"] = contract["product_code"]
     import hashlib
     payload_hash = hashlib.sha256(
         json.dumps(
@@ -184,12 +189,13 @@ def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
 
         conn.execute(
             "INSERT INTO tasks "
-            "(task_id, run_id, objective, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(task_id, run_id, objective, product_code, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 contract.get("run_id"),
                 contract.get("objective"),
+                contract.get("product_code"),
                 json.dumps(contract.get("required_tools", []), ensure_ascii=False),
                 json.dumps(contract.get("success_criteria", []), ensure_ascii=False),
                 "queued",
@@ -336,6 +342,34 @@ def get_task_status(task_id: str) -> dict | None:
         if not row:
             return None
         return dict(row)
+
+
+def is_magis_task(task: dict | None) -> bool:
+    """Return true only for a task carrying the server-defined MAGIS marker."""
+    if not isinstance(task, dict):
+        return False
+    raw_payload = task.get("payload")
+    try:
+        payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+    except (TypeError, ValueError):
+        return False
+    return task.get("product_code") == "magis" and isinstance(payload, dict)
+
+
+def is_magis_result(result_id: str) -> bool:
+    """Check that a candidate id belongs to a task created through MAGIS intake."""
+    if not isinstance(result_id, str) or not result_id.strip():
+        return False
+    init_db()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT product_code FROM tasks WHERE result_id = ?",
+            (result_id,),
+        ).fetchall()
+    for row in rows:
+        if row["product_code"] == "magis":
+            return True
+    return False
 
 def get_run_tasks(run_id: str) -> list[dict]:
     init_db()

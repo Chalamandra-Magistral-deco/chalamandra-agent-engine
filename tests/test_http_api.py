@@ -18,6 +18,7 @@ from api.safe_http import ResolvedWebhookTarget
 
 TEST_TOKEN = "test-api-token"
 TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
+TEST_MAGIS_JWT_SECRET = "magis-service-test-secret-distinto-y-largo-32-bytes"
 
 def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchestration:read") -> str:
     import time
@@ -29,6 +30,7 @@ def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchest
 def local_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[int, Any]]:
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
+    monkeypatch.delenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", raising=False)
     master = Master()
 
     async def fake_tool_call(agent: str, tool_call: dict[str, Any]) -> dict[str, Any]:
@@ -716,3 +718,187 @@ def test_accepted_distribution_posts_to_local_sink_with_w3c_child_span(
         sink.shutdown()
         sink.server_close()
         sink_thread.join(timeout=2)
+
+
+
+def make_magis_jwt(scopes="magis:execute magis:read") -> str:
+    import time
+    return jwt.encode(
+        {"scope": scopes, "sub": "magis-service", "exp": int(time.time()) + 300},
+        TEST_MAGIS_JWT_SECRET,
+        algorithm="HS256",
+    )
+
+
+def test_magis_product_route_fails_closed_when_model_execution_is_disabled(local_api, monkeypatch):
+    port, _ = local_api
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_JWT_SECRET", TEST_MAGIS_JWT_SECRET)
+    status, body = request(
+        port,
+        "/internal/v1/products/magis/requests",
+        method="POST",
+        payload={
+            "operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+            "prompt": "synthetic test input",
+        },
+        headers={
+            "Authorization": f"Bearer {make_magis_jwt('magis:execute')}",
+            "Idempotency-Key": "magis-f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+        },
+    )
+    assert status == 403
+    assert body == {"error": "magis_execution_disabled"}
+
+
+def test_magis_product_token_cannot_use_general_api_identity(local_api, monkeypatch):
+    port, _ = local_api
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_JWT_SECRET", TEST_MAGIS_JWT_SECRET)
+    # A general JWT with a product-looking subject is not valid under the
+    # dedicated MAGIS key; the identity is bound to its own signing secret.
+    token = jwt.encode(
+        {"scope": "magis:execute", "sub": "magis-service", "exp": 9999999999},
+        TEST_JWT_SECRET,
+        algorithm="HS256",
+    )
+    status, body = request(
+        port,
+        "/internal/v1/products/magis/requests",
+        method="POST",
+        payload={
+            "operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+            "prompt": "synthetic test input",
+        },
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Idempotency-Key": "magis-f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+        },
+    )
+    assert status == 401
+    assert body == {"error": "unauthorized"}
+
+
+def test_magis_product_job_status_is_scoped_to_magis_tasks(local_api, monkeypatch):
+    from api import task_bus
+
+    port, _ = local_api
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_JWT_SECRET", TEST_MAGIS_JWT_SECRET)
+    monkeypatch.setattr(task_bus, "get_task_status", lambda _task_id: {
+        "task_id": "task-magis-test",
+        "status": "candidate",
+        "trace_id": "1234567890abcdef1234567890abcdef",
+        "result_id": "candidate-magis-test",
+        "updated_at": "2026-11-03T00:00:00Z",
+        "product_code": "magis",
+        "payload": json.dumps({"operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f"}),
+    })
+    status, body = request(
+        port,
+        "/internal/v1/products/magis/jobs/task-magis-test",
+        headers={"Authorization": f"Bearer {make_magis_jwt('magis:read')}"},
+    )
+    assert status == 200
+    assert body["status"] == "candidate"
+    assert body["result_id"] == "candidate-magis-test"
+
+
+def test_magis_product_result_is_never_delivered_before_independent_acceptance(local_api, monkeypatch):
+    from api import acceptance_store, candidate_store, task_bus
+
+    port, _ = local_api
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_JWT_SECRET", TEST_MAGIS_JWT_SECRET)
+    monkeypatch.setattr(task_bus, "is_magis_result", lambda _result_id: True)
+    monkeypatch.setattr(candidate_store, "get_candidate", lambda result_id: {
+        "candidate_id": result_id,
+        "status": "candidate",
+        "summary": "synthetic result",
+    })
+    monkeypatch.setattr(acceptance_store, "get_acceptance", lambda _result_id: None)
+    headers = {"Authorization": f"Bearer {make_magis_jwt('magis:read')}"}
+    status, body = request(
+        port,
+        "/internal/v1/products/magis/results/candidate-magis-test",
+        headers=headers,
+    )
+    assert status == 202
+    assert body["status"] == "pending_verification"
+
+    monkeypatch.setattr(acceptance_store, "get_acceptance", lambda _result_id: {
+        "outcome": "accepted",
+        "decision_id": "decision-independent-1",
+        "verifier_id": "test-verifier",
+    })
+    status, body = request(
+        port,
+        "/internal/v1/products/magis/results/candidate-magis-test",
+        headers=headers,
+    )
+    assert status == 200
+    assert body["delivery_status"] == "accepted"
+    assert body["acceptance"]["outcome"] == "accepted"
+
+
+def test_magis_service_can_enqueue_only_the_server_defined_product_contract(monkeypatch):
+    from api import task_bus
+    import time
+    import jwt
+
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_JWT_SECRET", TEST_MAGIS_JWT_SECRET)
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "true")
+    monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
+    master = Master()
+    calls = []
+    task = {
+        "task_id": "d7a4f7a2-997f-4d4f-ae91-2d6192c4d09b",
+        "run_id": "3c3e642e-7b10-4e8e-a0e5-692e8609ff21",
+        "status": "queued",
+        "trace_id": "1234567890abcdef1234567890abcdef",
+        "product_code": "magis",
+        "payload": json.dumps({"operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f"}),
+    }
+    monkeypatch.setattr(task_bus, "enqueue_task", lambda contract, idempotency_key=None: calls.append((contract, idempotency_key)) or task["task_id"])
+    monkeypatch.setattr(task_bus, "get_task_status", lambda _task_id: task)
+
+    server = create_server("127.0.0.1", 0, master=master)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    operation_id = "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f"
+    token = jwt.encode(
+        {"scope": "magis:execute", "sub": "magis-service", "exp": int(time.time()) + 300},
+        TEST_MAGIS_JWT_SECRET,
+        algorithm="HS256",
+    )
+    try:
+        status, body = request(
+            server.server_address[1],
+            "/internal/v1/products/magis/requests",
+            method="POST",
+            payload={"operation_id": operation_id, "prompt": "synthetic task", "context": "test"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Idempotency-Key": f"magis-{operation_id}",
+            },
+        )
+        assert status == 202
+        assert body["task_id"] == task["task_id"]
+        assert len(calls) == 1
+        contract, idem = calls[0]
+        assert idem == f"magis-{operation_id}"
+        assert contract["objective"] == "magis_text_analysis"
+        assert contract["product_code"] == "magis"
+        assert contract["required_tools"] == []
+        assert contract["payload"]["operation_id"] == operation_id
+        # Product-scoped enablement must not open the general model endpoint.
+        general_status, general_body = request(
+            server.server_address[1],
+            "/v1/tasks",
+            method="POST",
+            payload={"task": "must remain disabled"},
+            headers={"Authorization": f"Bearer {make_jwt(scopes='jobs:write')}"},
+        )
+        assert general_status == 403
+        assert general_body["error"] == "model_calls_disabled"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

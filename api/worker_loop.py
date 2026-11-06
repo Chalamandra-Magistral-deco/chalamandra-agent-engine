@@ -352,11 +352,18 @@ def process_task(task: dict) -> dict:
                 summary = f"CatedralX no produjo un resultado elegible: {result.get('reason', result.get('status', 'unknown'))}"
                 status = "blocked"
         else:
-            model_calls_enabled = os.getenv(
-                "CHALAMANDRA_API_ENABLE_MODEL_CALLS", ""
-            ).strip().lower() in {"1", "true", "yes", "on"}
+            is_magis_task = task.get("product_code") == "magis"
+            execution_gate = (
+                "CHALAMANDRA_MAGIS_EXECUTION_ENABLED"
+                if is_magis_task
+                else "CHALAMANDRA_API_ENABLE_MODEL_CALLS"
+            )
+            model_calls_enabled = os.getenv(execution_gate, "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
             if (
-                not model_calls_enabled
+                not is_magis_task
+                and not model_calls_enabled
                 and objective.strip() == "catedralx_economic_proposal_review"
             ):
                 # This restricted economic path is deterministic and requires no model call.
