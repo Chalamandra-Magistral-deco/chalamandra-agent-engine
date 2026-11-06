@@ -2,6 +2,7 @@
 import asyncio
 import os
 import signal
+import threading
 import multiprocessing
 import sys
 import json
@@ -93,6 +94,19 @@ def _run_catedralx(payload: dict) -> dict:
             "source": source.strip(),
         }
     }
+    # Governance inputs are transported verbatim; this worker is not their producer.
+    for source_key, snapshot_key in (
+        ("dynamic_constraints", "DYNAMIC_CONSTRAINTS"),
+        ("central_dimensions_bp", "CENTRAL_DIMENSIONS_BP"),
+    ):
+        if source_key in payload:
+            value = payload[source_key]
+            if not isinstance(value, dict):
+                return {
+                    "status": "BLOCKED",
+                    "reason": f"{source_key}_must_be_object",
+                }
+            snapshot[snapshot_key] = value
     fd, temp_path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
@@ -528,6 +542,13 @@ def _run_worker_loop(stop_event=None):
     write_worker_heartbeat("idle")
 
     while stop_event is None or not stop_event.is_set():
+        publication_report = candidate_store.reconcile_pending_publications()
+        if publication_report["published"]:
+            print(
+                "[worker] candidate publications reconciled "
+                f"recovered={publication_report['recovered']} "
+                f"already_present={publication_report['already_present']}"
+            )
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task()
         if task:
@@ -573,7 +594,21 @@ def main():
         raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe estar entre 1 y 16")
 
     if process_count == 1:
-        _run_worker_loop()
+        stop_event = threading.Event()
+
+        def request_stop(signum, frame):
+            stop_event.set()
+
+        previous_handlers = {
+            signum: signal.signal(signum, request_stop)
+            for signum in (signal.SIGTERM, signal.SIGINT)
+        }
+        try:
+            _run_worker_loop(stop_event)
+        finally:
+            stop_event.set()
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
         return
 
     context = multiprocessing.get_context("spawn")

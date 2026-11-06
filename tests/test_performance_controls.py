@@ -36,21 +36,24 @@ def test_task_queue_queries_use_partial_indexes(tmp_path, monkeypatch):
     assert "idx_tasks_run_created" in " ".join(str(row) for row in by_run)
 
 
-def test_candidate_store_index_returns_latest_and_rebuilds(tmp_path, monkeypatch):
+def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch):
     monkeypatch.setattr(candidate_store, "_state_dir", lambda: tmp_path)
-    candidate_store.save_candidate(
-        {"candidate_id": "candidate-1", "status": "candidate", "revision": 1}
-    )
-    candidate_store.save_candidate(
-        {"candidate_id": "candidate-1", "status": "candidate", "revision": 2}
-    )
+    candidate = {"candidate_id": "candidate-1", "status": "candidate", "revision": 1}
+    candidate_store.save_candidate(candidate)
+    candidate_store.save_candidate(candidate)
 
     found = candidate_store.get_candidate("candidate-1")
-    assert found is not None
-    assert found["revision"] == 2
+    assert found == candidate
+    path = candidate_store._candidates_file()
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
+
+    with pytest.raises(ValueError, match="candidate_id conflict"):
+        candidate_store.save_candidate(
+            {"candidate_id": "candidate-1", "status": "candidate", "revision": 2}
+        )
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 1
 
     # Simulate a legacy writer that appended JSONL without updating the side index.
-    path = candidate_store._candidates_file()
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"candidate_id": "candidate-legacy", "status": "blocked"}) + "\n")
 
