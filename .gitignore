@@ -16,3 +16,14 @@ logs/
 *.bak-heartbeat-*
 tasks.db
 tasks.db-*
+<<<<<<< Updated upstream
+=======
+.venv_DEPRECATED_*/
+
+.venv_test/
+.env
+secrets/
+config/.env
+.env
+.env.*
+>>>>>>> Stashed changes
