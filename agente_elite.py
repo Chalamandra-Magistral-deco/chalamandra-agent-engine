@@ -24,8 +24,8 @@ TIMEOUT_SECONDS = 180
 MAX_TURNS = 4
 
 REPOS_ROOT = Path(
-    "/home/azureuser/workspace/repos"
-).resolve(strict=True)
+    os.environ.get("CHALAMANDRA_REPOS_DIR", "/home/azureuser/workspace/repos")
+).resolve(strict=False)
 
 
 class EmptyArgs(BaseModel):

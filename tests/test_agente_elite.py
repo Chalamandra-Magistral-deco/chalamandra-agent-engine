@@ -18,6 +18,10 @@ def test_disk_usage_returns_real_read_only_metrics():
     assert 0 <= result["used_percent"] <= 100
 
 
+@pytest.mark.skipif(
+    not elite.REPOS_ROOT.is_dir(),
+    reason="requires VM-local repos directory (not present in CI runners)",
+)
 def test_repository_listing_is_fixed_and_limited():
     result = elite.list_repos(elite.ListReposArgs(limit=10))
 
