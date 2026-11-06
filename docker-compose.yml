@@ -13,6 +13,8 @@ services:
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
     env_file:
+      - ./secrets/api.env
+      - ./secrets/api.env
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
@@ -36,6 +38,8 @@ services:
         AGENTS_BASE_IMAGE: agents-api:candidate-069345ee7d37
     container_name: agents-worker
     env_file:
+      - ./secrets/api.env
+      - ./secrets/api.env
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX

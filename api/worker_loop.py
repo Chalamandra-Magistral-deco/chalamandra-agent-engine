@@ -93,6 +93,19 @@ def _run_catedralx(payload: dict) -> dict:
             "source": source.strip(),
         }
     }
+    # Governance inputs are transported verbatim; this worker is not their producer.
+    for source_key, snapshot_key in (
+        ("dynamic_constraints", "DYNAMIC_CONSTRAINTS"),
+        ("central_dimensions_bp", "CENTRAL_DIMENSIONS_BP"),
+    ):
+        if source_key in payload:
+            value = payload[source_key]
+            if not isinstance(value, dict):
+                return {
+                    "status": "BLOCKED",
+                    "reason": f"{source_key}_must_be_object",
+                }
+            snapshot[snapshot_key] = value
     fd, temp_path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
