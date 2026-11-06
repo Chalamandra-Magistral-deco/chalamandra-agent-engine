@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:candidate-ec3d83d2626b
+        CATEDRALX_BASE_IMAGE: catedralx:candidate-ecebbf6c910e
     container_name: agents-api
     ports:
       - "127.0.0.1:8228:8766"
