@@ -42,3 +42,6 @@ include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "co
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+explicit_package_bases = true
