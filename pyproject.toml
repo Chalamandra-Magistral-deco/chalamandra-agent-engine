@@ -35,6 +35,7 @@ select = ["E4", "E7", "E9", "F"]
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+explicit_package_bases = true
 
 [tool.setuptools.packages.find]
 include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "security*", "core*", "api*"]
@@ -43,5 +44,3 @@ include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "co
 pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 
-[tool.mypy]
-explicit_package_bases = true
