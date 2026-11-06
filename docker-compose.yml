@@ -1,20 +1,18 @@
 services:
   api:
-    image: agents-api:candidate-069345ee7d37
+    image: agents-api:repair-candidate-20261106
     build:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:v1.0-canonico
+        CATEDRALX_BASE_IMAGE: catedralx:repair-candidate-20261106
     container_name: agents-api
     ports:
-      - "127.0.0.1:8228:8766"
       - "127.0.0.1:8766:8766"
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
+      - /home/azureuser/.local/state/chalamandra/catedralx:/home/chalamandra/.local/state/chalamandra/catedralx
     env_file:
-      - ./secrets/api.env
-      - ./secrets/api.env
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
@@ -30,16 +28,14 @@ services:
     networks: [agents_net]
 
   worker:
-    image: agents-worker:candidate-069345ee7d37
+    image: agents-worker:repair-candidate-20261106
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
       args:
-        AGENTS_BASE_IMAGE: agents-api:candidate-069345ee7d37
+        AGENTS_BASE_IMAGE: agents-api:repair-candidate-20261106
     container_name: agents-worker
     env_file:
-      - ./secrets/api.env
-      - ./secrets/api.env
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
