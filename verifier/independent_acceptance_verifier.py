@@ -24,7 +24,7 @@ from api.crypto_signer import create_canonical_payload  # noqa: E402
 try:
     from nacl.signing import SigningKey
 except ImportError:  # pragma: no cover - exercised by deployment startup checks
-    SigningKey = None
+    SigningKey = None  # type: ignore[misc, assignment]
 
 CANONICAL_FIELDS = (
     "decision_id",

@@ -352,6 +352,43 @@ def test_general_task_passes_payload_and_success_criteria_to_master(monkeypatch)
 
 
 
+def test_worker_blocks_tools_without_verified_effect_classification(monkeypatch):
+    saved_candidates = []
+    completions = []
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
+
+    class FakeMaster:
+        def __init__(self):
+            pass
+
+        async def execute_task(self, objective, *, allowed_tools=None):
+            raise AssertionError("unclassified tool must never reach Master")
+
+    monkeypatch.setattr(worker_loop, "Master", FakeMaster)
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completions.append(candidate_result),
+    )
+    task = {
+        "task_id": "unclassified-tool-test",
+        "objective": "read external data",
+        "payload": "{}",
+        "success_criteria": '["Produce a result"]',
+        "required_tools": '["search"]',
+        "execution_policy": '{"allowed_tools":["search"],"side_effects":"read_only"}',
+        "trace_id": "trace-unclassified-tool-test",
+    }
+    result = worker_loop.process_task(task)
+    assert result["status"] == "blocked"
+    assert "clasificación de efectos verificada" in result["summary"]
+    assert saved_candidates[0]["status"] == "blocked"
+    assert completions[0]["status"] == "blocked"
+
+
 def _approved_business_proposal_payload(cycle_id="cycle-deterministic-test"):
     return {
         "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",

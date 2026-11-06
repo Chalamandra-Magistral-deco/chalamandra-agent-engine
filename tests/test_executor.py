@@ -219,7 +219,7 @@ async def test_execute_plan_propagates_cancellation() -> None:
 
     fake_master = FakeMaster()
     fake_master.orchestrator.run.side_effect = asyncio.CancelledError()
-    executor = Executor(master=fake_master)
+    executor = Executor(master=fake_master)  # type: ignore[arg-type]
     subtasks = [
         Subtask(
             id="cancel",
@@ -253,7 +253,7 @@ async def test_native_tool_call_is_validated_executed_and_returned_to_ollama(
         "content": "",
         "tool_calls": [{"function": {"name": "dynamics", "arguments": tool_arguments}}],
     }
-    master.orchestrator.run = AsyncMock(
+    master.orchestrator.run = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             ModelResponse(
                 call_id="tool-call",
@@ -314,7 +314,7 @@ async def test_native_tool_call_with_invalid_arguments_is_not_executed(
 
     monkeypatch.setattr(master, "execute_tool", fake_execute_tool)
     bad_arguments = {"unknown": True}
-    master.orchestrator.run = AsyncMock(
+    master.orchestrator.run = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             ModelResponse(
                 call_id="tool-call",

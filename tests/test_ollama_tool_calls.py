@@ -89,7 +89,7 @@ async def test_ollama_adapter_reuses_followup_conversation_messages(monkeypatch)
         {"role": "tool", "tool_name": "dynamics", "content": '{"ok":true}'},
     ]
     response = await OllamaAdapter().generate(
-        ModelRequest(prompt="Do analysis", role=ModelRole.AGENT, messages=messages)
+        ModelRequest(prompt="Do analysis", role=ModelRole.AGENT, messages=messages)  # type: ignore[arg-type]
     )
 
     assert response.status.value == "ok"

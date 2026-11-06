@@ -706,38 +706,70 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 if "signature" not in body:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing_signature"})
                     return
-                existing = acceptance_store.get_acceptance(str(body.get("candidate_id") or ""))
+                candidate_id = str(body.get("candidate_id") or "")
+                existing = acceptance_store.get_acceptance(candidate_id)
+                replay = existing is not None
                 if existing:
                     same_decision = (
                         existing.get("decision_id") == body.get("decision_id")
                         and existing.get("signature") == body.get("signature")
                     )
-                    if same_decision:
-                        self._send_json(HTTPStatus.CREATED, {
-                            "decision_id": existing["decision_id"],
-                            "outcome": existing["outcome"],
-                            "idempotent_replay": True,
-                        })
-                    else:
+                    if not same_decision:
                         self._send_json(HTTPStatus.CONFLICT, {"error": "acceptance_already_recorded"})
-                    return
-                decision_id = acceptance_store.record_acceptance(body)
+                        return
+                    decision_id = str(existing["decision_id"])
+                    outcome = existing.get("outcome")
+                else:
+                    decision_id = acceptance_store.record_acceptance(body)
+                    outcome = body.get("outcome")
 
-                # Close the orchestration state only after the independent gate accepts it.
-                if body.get("outcome") == "accepted":
-                    task_bus.mark_result_accepted(str(body.get("candidate_id") or ""))
-
-                    # FASE 4: Si es aceptado, disparar webhooks de distribución
-                    webhook_dispatcher.dispatch_event(
-                        event_type="result.accepted",
-                        result_id=str(body.get("candidate_id") or ""),
-                        trace_id=body.get("trace_id", "unknown")
+                # An accepted decision is not distributable until TaskBus confirms
+                # that every task linked to this result is in the accepted state.
+                if outcome == "accepted":
+                    transitioned = task_bus.mark_result_accepted(candidate_id)
+                    task_states = task_bus.get_result_task_statuses(candidate_id)
+                    all_tasks_accepted = bool(task_states) and all(
+                        item.get("status") == "accepted" for item in task_states
                     )
-                    
-                self._send_json(HTTPStatus.CREATED, {
-                    "decision_id": decision_id,
-                    "outcome": body.get("outcome")
-                })
+                    if not all_tasks_accepted:
+                        self._send_json(HTTPStatus.CONFLICT, {
+                            "error": "acceptance_operational_sync_pending",
+                            "decision_id": decision_id,
+                            "transitioned_tasks": transitioned,
+                            "task_states": task_states,
+                            "distribution_status": "blocked",
+                        })
+                        return
+
+                    # Stable event identity makes retries safe after a persisted
+                    # decision or a crash between state transition and dispatch.
+                    try:
+                        delivered_count = webhook_dispatcher.dispatch_event(
+                            event_type="result.accepted",
+                            result_id=candidate_id,
+                            trace_id=body.get("trace_id", "unknown"),
+                            event_id=f"acceptance:{decision_id}",
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                            "error": "acceptance_recorded_distribution_pending",
+                            "decision_id": decision_id,
+                            "distribution_status": "pending_retry",
+                        })
+                        return
+                    if delivered_count < 1:
+                        self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                            "error": "acceptance_recorded_distribution_pending",
+                            "decision_id": decision_id,
+                            "delivered_count": delivered_count,
+                            "distribution_status": "pending_retry",
+                        })
+                        return
+
+                response = {"decision_id": decision_id, "outcome": outcome}
+                if replay:
+                    response["idempotent_replay"] = True
+                self._send_json(HTTPStatus.CREATED, response)
             except ValueError as e:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(e)})
             return
@@ -773,12 +805,21 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not isinstance(permissions, dict):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "permissions_must_be_object"})
                 return
-            allowed_tools = permissions.get("allowed_tools", [])
+            if set(permissions) != {"allowed_tools", "side_effects"}:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "permissions_require_allowed_tools_and_side_effects"
+                })
+                return
+            allowed_tools = permissions.get("allowed_tools")
+            side_effects = permissions.get("side_effects")
             if not isinstance(allowed_tools, list) or any(
                 not isinstance(tool, str) or not tool.strip() or len(tool) > 128
                 for tool in allowed_tools
-            ) or len(allowed_tools) > 32:
+            ) or len(allowed_tools) > 32 or len(set(allowed_tools)) != len(allowed_tools):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_allowed_tools"})
+                return
+            if side_effects not in {"none", "read_only", "approved_scoped"}:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_side_effects_policy"})
                 return
             registered_tools = set(self.server.master.tools.available())
             unknown_tools = sorted(set(allowed_tools).difference(registered_tools))
@@ -786,6 +827,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {
                     "error": "unknown_allowed_tools",
                     "tools": unknown_tools,
+                })
+                return
+            if side_effects == "approved_scoped":
+                self._send_json(HTTPStatus.FORBIDDEN, {
+                    "error": "approved_scoped_requires_verifiable_approval",
+                    "execution_status": "blocked",
+                })
+                return
+            if allowed_tools:
+                self._send_json(HTTPStatus.FORBIDDEN, {
+                    "error": "tool_effect_classification_missing",
+                    "tools": sorted(allowed_tools),
+                    "execution_status": "blocked",
                 })
                 return
             success_criteria = body.get("success_criteria", ["Task completed"])
@@ -815,6 +869,10 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 "run_id": run_id,
                 "objective": objective.strip(),
                 "required_tools": allowed_tools,
+                "execution_policy": {
+                    "allowed_tools": allowed_tools,
+                    "side_effects": side_effects,
+                },
                 "success_criteria": success_criteria,
                 "payload": payload,
                 "trace_id": trace_id,
@@ -861,9 +919,51 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if candidate_result.get("status") not in {"candidate", "blocked", "failed"}:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_status"})
                 return
+            required_fields = {
+                "candidate_id", "result_id", "worker_id", "status", "summary",
+                "evidence", "assumptions", "contradictions", "trace_id",
+            }
+            missing_fields = sorted(required_fields.difference(candidate_result))
+            if missing_fields:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "candidate_result_missing_fields",
+                    "missing_fields": missing_fields,
+                })
+                return
+            allowed_fields = required_fields | {"tests_performed", "limitations"}
+            unknown_fields = sorted(set(candidate_result).difference(allowed_fields))
+            if unknown_fields:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "candidate_result_unknown_fields",
+                    "unknown_fields": unknown_fields,
+                })
+                return
+            for field in ("candidate_id", "worker_id", "summary", "trace_id"):
+                value = candidate_result.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "invalid_candidate_result_field", "field": field,
+                    })
+                    return
+            for field in ("evidence", "assumptions", "contradictions", "tests_performed", "limitations"):
+                if field in candidate_result and not isinstance(candidate_result[field], list):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "invalid_candidate_result_field", "field": field,
+                    })
+                    return
+            result_id = candidate_result.get("result_id")
+            if result_id is not None and (
+                not isinstance(result_id, str) or not result_id.strip()
+                or result_id != candidate_result["candidate_id"]
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "candidate_result_identity_mismatch"})
+                return
+            if candidate_result["status"] == "candidate" and result_id is None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "result_id_required_for_candidate"})
+                return
             try:
                 completed = task_bus.mark_task_completed(
-                    task_id, candidate_result, lease_token=lease_token
+                    task_id, candidate_result, result_id=result_id, lease_token=lease_token
                 )
             except (TypeError, ValueError):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_result"})

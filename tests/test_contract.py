@@ -143,7 +143,14 @@ def test_internal_tasks_results_requires_auth(local_api):
         method="POST",
         payload={
             "candidate_id": "cand-1",
+            "result_id": "cand-1",
+            "worker_id": "worker-contract-test",
             "status": "candidate",
+            "summary": "synthetic candidate",
+            "evidence": [],
+            "assumptions": [],
+            "contradictions": [],
+            "trace_id": "00-" + "a" * 32 + "-" + "b" * 16 + "-01",
             "lease_token": claim["lease_token"],
         },
         headers={"Authorization": f"Bearer {make_jwt('tasks:complete')}"},
@@ -206,7 +213,7 @@ def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(loca
         port,
         "/internal/v1/orchestration/runs",
         method="POST",
-        payload={"objective": "financial_analysis", "payload": payload},
+        payload={"objective": "financial_analysis", "payload": payload, "permissions": {"allowed_tools": [], "side_effects": "none"}},
         headers={"Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"},
     )
     assert status == 202
@@ -214,6 +221,10 @@ def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(loca
     tasks = task_bus.get_tasks_by_run(run_id)
     assert len(tasks) == 1
     assert json.loads(tasks[0]["payload"]) == payload
+    assert json.loads(tasks[0]["execution_policy"]) == {
+        "allowed_tools": [],
+        "side_effects": "none",
+    }
 
     claimed = task_bus.get_next_task()
     assert claimed is not None
@@ -246,7 +257,7 @@ def test_orchestration_run_idempotency_preserves_original_run(local_api):
     payload = {
         "objective": "catedralx_economic_proposal_review",
         "payload": {"cycle_id": "cycle-idem-test", "proposal": "test-only"},
-        "permissions": {"allowed_tools": []},
+        "permissions": {"allowed_tools": [], "side_effects": "none"},
         "success_criteria": ["Create a traceable candidate"],
     }
 
@@ -311,6 +322,38 @@ def test_orchestration_run_requires_catedralx_service_principal(local_api):
     assert body["error"] == "unauthorized"
 
 
+def test_orchestration_run_blocks_tools_without_effect_classification(local_api):
+    auth = {
+        "Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"
+    }
+    status, body = request(
+        local_api, "/internal/v1/orchestration/runs", method="POST",
+        payload={
+            "objective": "read-only analysis",
+            "permissions": {"allowed_tools": ["dynamics"], "side_effects": "read_only"},
+        }, headers=auth,
+    )
+    assert status == 403
+    assert body["error"] == "tool_effect_classification_missing"
+    assert body["execution_status"] == "blocked"
+
+
+def test_orchestration_run_blocks_unverified_approved_scoped_effects(local_api):
+    auth = {
+        "Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"
+    }
+    status, body = request(
+        local_api, "/internal/v1/orchestration/runs", method="POST",
+        payload={
+            "objective": "scoped external action",
+            "permissions": {"allowed_tools": [], "side_effects": "approved_scoped"},
+        }, headers=auth,
+    )
+    assert status == 403
+    assert body["error"] == "approved_scoped_requires_verifiable_approval"
+    assert body["execution_status"] == "blocked"
+
+
 def test_orchestration_run_rejects_unregistered_allowed_tools(local_api):
     port = local_api
     auth = {
@@ -321,7 +364,7 @@ def test_orchestration_run_rejects_unregistered_allowed_tools(local_api):
         method="POST",
         payload={
             "objective": "valid",
-            "permissions": {"allowed_tools": ["shell_arbitrary"]},
+            "permissions": {"allowed_tools": ["shell_arbitrary"], "side_effects": "none"},
         },
         headers=auth,
     )

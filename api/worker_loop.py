@@ -428,6 +428,10 @@ def process_task(task: dict) -> dict:
                 try:
                     success_criteria = json.loads(task.get("success_criteria") or "[]")
                     required_tools = json.loads(task.get("required_tools") or "[]")
+                    execution_policy = json.loads(
+                        task.get("execution_policy") or
+                        '{"allowed_tools":[],"side_effects":"none"}'
+                    )
                 except json.JSONDecodeError:
                     summary = "Ejecución bloqueada: contrato de tarea mal formado"
                     status = "blocked"
@@ -439,9 +443,19 @@ def process_task(task: dict) -> dict:
                         or not isinstance(required_tools, list)
                         or any(not isinstance(item, str) or not item.strip() for item in success_criteria)
                         or any(not isinstance(item, str) or not item.strip() for item in required_tools)
+                        or not isinstance(execution_policy, dict)
+                        or set(execution_policy) != {"allowed_tools", "side_effects"}
+                        or execution_policy.get("allowed_tools") != required_tools
+                        or execution_policy.get("side_effects") not in {"none", "read_only"}
                     ):
-                        summary = "Ejecución bloqueada: criterios o herramientas no son listas válidas"
+                        summary = "Ejecución bloqueada: contrato o política de permisos inválidos"
                         status = "blocked"
+                if status != "blocked" and required_tools:
+                    summary = (
+                        "Ejecución bloqueada: las herramientas solicitadas no tienen "
+                        "clasificación de efectos verificada"
+                    )
+                    status = "blocked"
                 if status != "blocked":
                     task_context = {
                         "objective": objective,

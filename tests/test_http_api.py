@@ -83,7 +83,7 @@ def test_v1_request_authenticates_enqueues_and_persists_w3c_trace(local_api, tmp
     payload = {
         "objective": "traceable_test_request",
         "payload": {"source": "synthetic_test"},
-        "permissions": {"allowed_tools": []},
+        "permissions": {"allowed_tools": [], "side_effects": "none"},
         "success_criteria": ["must be traceable"],
     }
     headers = {
@@ -127,7 +127,7 @@ def test_v1_request_authenticates_enqueues_and_persists_w3c_trace(local_api, tmp
 
 def test_v1_request_requires_auth_and_idempotency_key(local_api):
     port, _ = local_api
-    payload = {"objective": "test", "payload": {}}
+    payload = {"objective": "test", "payload": {}, "permissions": {"allowed_tools": [], "side_effects": "none"}}
     status, body = request(
         port, "/v1/request", method="POST", payload=payload,
         headers={"Content-Type": "application/json", "Idempotency-Key": "missing-auth-123"},
@@ -353,14 +353,20 @@ def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypat
     port, _ = local_api
     payload = {
         "candidate_id": "candidate-internal-1",
+        "result_id": "candidate-internal-1",
+        "worker_id": "worker-test-1",
         "status": "candidate",
+        "summary": "synthetic candidate",
+        "evidence": [],
+        "assumptions": [],
+        "contradictions": [],
         "trace_id": "trace-internal-1",
         "lease_token": "lease-test-token",
     }
     calls = []
 
     def fake_complete(task_id, body, result_id=None, lease_token=None):
-        calls.append((task_id, body, lease_token))
+        calls.append((task_id, body, result_id, lease_token))
         return True
 
     monkeypatch.setattr(task_bus, "mark_task_completed", fake_complete)
@@ -410,6 +416,36 @@ def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypat
     assert result["error"] == "invalid_candidate_status"
     assert calls == []
 
+    incomplete = {key: value for key, value in payload.items() if key != "summary"}
+    status, result = request(
+        port, "/internal/v1/tasks/task-internal-1/results", method="POST",
+        payload=incomplete,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "candidate_result_missing_fields"
+    assert calls == []
+
+    unexpected = {**payload, "uncontracted_field": "not-allowed"}
+    status, result = request(
+        port, "/internal/v1/tasks/task-internal-1/results", method="POST",
+        payload=unexpected,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "candidate_result_unknown_fields"
+    assert calls == []
+
+    mismatched = {**payload, "result_id": "different-result"}
+    status, result = request(
+        port, "/internal/v1/tasks/task-internal-1/results", method="POST",
+        payload=mismatched,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "candidate_result_identity_mismatch"
+    assert calls == []
+
     status, result = request(
         port,
         "/internal/v1/tasks/task-internal-1/results",
@@ -422,6 +458,7 @@ def test_internal_task_result_requires_tasks_complete_scope(local_api, monkeypat
     assert calls == [(
         "task-internal-1",
         {key: value for key, value in payload.items() if key != "lease_token"},
+        "candidate-internal-1",
         "lease-test-token",
     )]
 
@@ -748,10 +785,10 @@ def test_accepted_distribution_posts_to_local_sink_with_w3c_child_span(
 
         assert len(received) == 1
         message = received[0]
-        assert message["body"]["event_id"] == event_id
-        assert message["body"]["event_type"] == "result.accepted"
-        assert message["body"]["result_id"] == candidate_id
-        assert message["body"]["trace_id"] == trace_id
+        assert message["body"]["event_id"] == event_id  # type: ignore[index]
+        assert message["body"]["event_type"] == "result.accepted"  # type: ignore[index]
+        assert message["body"]["result_id"] == candidate_id  # type: ignore[index]
+        assert message["body"]["trace_id"] == trace_id  # type: ignore[index]
         assert message["trace_id_header"] == trace_id
         assert message["signature"]
         child = message["traceparent"]
@@ -762,7 +799,7 @@ def test_accepted_distribution_posts_to_local_sink_with_w3c_child_span(
             json.dumps(message["body"], sort_keys=True, separators=(",", ":")).encode(),
             hashlib.sha256,
         ).hexdigest()
-        assert hmac.compare_digest(message["signature"], expected_signature)
+        assert hmac.compare_digest(message["signature"], expected_signature)  # type: ignore[call-overload]
     finally:
         sink.shutdown()
         sink.server_close()

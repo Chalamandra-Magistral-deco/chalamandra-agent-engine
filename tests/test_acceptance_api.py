@@ -153,7 +153,9 @@ def test_get_result_blocked_with_rejection(api_server):
 
 @patch("api.candidate_store.get_candidate")
 @patch("api.candidate_store.compute_evidence_digest")
-def test_post_acceptance_persists_record(mock_digest, mock_get_candidate, api_server, tmp_path):
+def test_acceptance_blocks_distribution_until_task_state_is_accepted(
+    mock_digest, mock_get_candidate, api_server, tmp_path
+):
     mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
     mock_digest.return_value = "a" * 64
     payload = make_decision()
@@ -162,25 +164,98 @@ def test_post_acceptance_persists_record(mock_digest, mock_get_candidate, api_se
     with (
         patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"),
         patch("api.task_bus.mark_result_accepted", return_value=0) as mark_accepted,
+        patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "candidate"}]),
+        patch("api.webhook_dispatcher.dispatch_event", return_value=1) as dispatch,
     ):
         status, body = _post(
-            f"{api_server}/v1/acceptance",
-            payload,
+            f"{api_server}/v1/acceptance", payload,
             {"Authorization": f"Bearer {make_jwt()}"},
         )
-        assert status == 201
+        assert status == 409
+        assert body["error"] == "acceptance_operational_sync_pending"
+        assert body["distribution_status"] == "blocked"
         assert (tmp_path / "acceptance_store.jsonl").exists()
-        assert body["outcome"] == "accepted"
+        assert len((tmp_path / "acceptance_store.jsonl").read_text().splitlines()) == 1
+        dispatch.assert_not_called()
 
-        repeated_status, repeated_body = _post(
-            f"{api_server}/v1/acceptance",
-            payload,
-            {"Authorization": f"Bearer {make_jwt()}"},
-        )
+        # A retry of the exact signed decision reconciles the already-accepted task.
+        task_statuses = [{"task_id": "task-1", "status": "accepted"}]
+        with patch("api.task_bus.get_result_task_statuses", return_value=task_statuses):
+            repeated_status, repeated_body = _post(
+                f"{api_server}/v1/acceptance", payload,
+                {"Authorization": f"Bearer {make_jwt()}"},
+            )
         assert repeated_status == 201
         assert repeated_body["idempotent_replay"] is True
+        assert mark_accepted.call_count == 2
+        dispatch.assert_called_once_with(
+            event_type="result.accepted",
+            result_id="test-123",
+            trace_id=payload["trace_id"],
+            event_id="acceptance:dec-1",
+        )
         assert len((tmp_path / "acceptance_store.jsonl").read_text().splitlines()) == 1
-        assert mark_accepted.call_count == 1
+
+
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
+def test_acceptance_reports_distribution_pending_when_no_delivery_succeeds(
+    mock_digest, mock_get_candidate, api_server, tmp_path
+):
+    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
+    mock_digest.return_value = "a" * 64
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"),
+        patch("api.task_bus.mark_result_accepted", return_value=1),
+        patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "accepted"}]),
+        patch("api.webhook_dispatcher.dispatch_event", return_value=0) as dispatch,
+    ):
+        status, body = _post(
+            f"{api_server}/v1/acceptance", payload,
+            {"Authorization": f"Bearer {make_jwt()}"},
+        )
+        assert status == 503
+        assert body["error"] == "acceptance_recorded_distribution_pending"
+        assert body["delivered_count"] == 0
+        assert body["distribution_status"] == "pending_retry"
+        dispatch.assert_called_once()
+        assert len((tmp_path / "acceptance_store.jsonl").read_text().splitlines()) == 1
+
+
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
+def test_acceptance_conflicting_replay_is_rejected(
+    mock_digest, mock_get_candidate, api_server, tmp_path
+):
+    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
+    mock_digest.return_value = "a" * 64
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"),
+        patch("api.task_bus.mark_result_accepted", return_value=1),
+        patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "accepted"}]),
+        patch("api.webhook_dispatcher.dispatch_event", return_value=1),
+    ):
+        status, _ = _post(f"{api_server}/v1/acceptance", payload,
+                          {"Authorization": f"Bearer {make_jwt()}"})
+        assert status == 201
+
+        conflicting = dict(payload)
+        conflicting.pop("signature")
+        conflicting["decision_id"] = "dec-2"
+        conflicting["signature"] = sign_test_decision(conflicting)
+        repeated_status, repeated_body = _post(
+            f"{api_server}/v1/acceptance", conflicting,
+            {"Authorization": f"Bearer {make_jwt()}"},
+        )
+        assert repeated_status == 409
+        assert repeated_body["error"] == "acceptance_already_recorded"
+        assert len((tmp_path / "acceptance_store.jsonl").read_text().splitlines()) == 1
 
 
 def test_acceptance_fails_closed_without_configured_verifier_identity(api_server, monkeypatch):

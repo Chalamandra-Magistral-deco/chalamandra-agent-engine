@@ -136,7 +136,7 @@ def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path
         request_contract = {
             "objective": "financial_analysis",
             "payload": payload,
-            "permissions": {"allowed_tools": []},
+            "permissions": {"allowed_tools": [], "side_effects": "none"},
             "success_criteria": ["Produce a traced, analysis-only CatedralX DecisionResult."],
         }
         status, queued = _http_json(

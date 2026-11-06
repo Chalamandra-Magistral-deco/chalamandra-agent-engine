@@ -161,8 +161,8 @@ class EliteAgentCore:
         if isinstance(arguments, str):
             arguments = json.loads(arguments)
 
-        validated = TOOL_MODELS[name].model_validate(arguments)
-        result = TOOL_FUNCTIONS[name](validated)
+        validated = TOOL_MODELS[name].model_validate(arguments)  # type: ignore[attr-defined]
+        result = TOOL_FUNCTIONS[name](validated)  # type: ignore[operator]
 
         logger.info("Herramienta de lectura ejecutada: %s", name)
         return json.dumps(result, ensure_ascii=False)

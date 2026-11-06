@@ -110,6 +110,10 @@ def init_db():
                     "ALTER TABLE tasks ADD COLUMN attempt_count "
                     "INTEGER NOT NULL DEFAULT 0"
                 ),
+                "execution_policy": (
+                    "ALTER TABLE tasks ADD COLUMN execution_policy TEXT "
+                    "NOT NULL DEFAULT '{\"allowed_tools\":[],\"side_effects\":\"none\"}'"
+                ),
             }
             for column, statement in migrations.items():
                 if column not in columns:
@@ -209,6 +213,9 @@ def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
         "required_tools": contract.get("required_tools", []),
         "success_criteria": contract.get("success_criteria", []),
         "payload": contract.get("payload", {}),
+        "execution_policy": contract.get(
+            "execution_policy", {"allowed_tools": [], "side_effects": "none"}
+        ),
     }
     # Preserve the pre-product idempotency digest for every existing caller.
     if contract.get("product_code") is not None:
@@ -253,8 +260,8 @@ def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
 
         conn.execute(
             "INSERT INTO tasks "
-            "(task_id, run_id, objective, product_code, required_tools, success_criteria, status, trace_id, payload, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(task_id, run_id, objective, product_code, required_tools, success_criteria, status, trace_id, payload, execution_policy, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 contract.get("run_id"),
@@ -265,6 +272,10 @@ def enqueue_task(contract: dict, idempotency_key: str | None = None) -> str:
                 "queued",
                 contract.get("trace_id"),
                 json.dumps(contract.get("payload", {}), ensure_ascii=False, allow_nan=False),
+                json.dumps(
+                    contract.get("execution_policy", {"allowed_tools": [], "side_effects": "none"}),
+                    ensure_ascii=False, sort_keys=True, allow_nan=False,
+                ),
                 now,
                 now,
             ),
@@ -466,6 +477,19 @@ def mark_result_accepted(result_id: str) -> int:
             (now, result_id),
         )
         return int(cursor.rowcount)
+
+
+def get_result_task_statuses(result_id: str) -> list[dict]:
+    """Return every task linked to a result for acceptance reconciliation."""
+    if not isinstance(result_id, str) or not result_id.strip():
+        raise ValueError("result_id is required")
+    init_db()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT task_id, status FROM tasks WHERE result_id = ? ORDER BY task_id",
+            (result_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_task_status(task_id: str) -> dict | None:

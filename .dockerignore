@@ -21,3 +21,11 @@ htmlcov/
 **/service_account*.json
 .venv_test/
 .venv_DEPRECATED_*/
+secrets/
+**/secrets/
+logs/
+**/logs/
+**/*.p12
+**/*.pfx
+**/*.sqlite
+**/*.db
