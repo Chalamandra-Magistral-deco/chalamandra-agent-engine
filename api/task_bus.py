@@ -80,6 +80,23 @@ def init_db():
                     created_at TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS candidate_publications (
+                    task_id TEXT PRIMARY KEY,
+                    candidate_id TEXT NOT NULL,
+                    candidate_result TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'published')),
+                    created_at TEXT NOT NULL,
+                    published_at TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+            """)
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
             }
@@ -121,6 +138,53 @@ def init_db():
                 "CREATE INDEX IF NOT EXISTS idx_tasks_result_status "
                 "ON tasks(result_id, status)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_candidate_publications_pending "
+                "ON candidate_publications(created_at, task_id) "
+                "WHERE status='pending'"
+            )
+
+            # One-time backfill: recover terminal task results written before the
+            # transactional outbox existed. Results without candidate IDs are not
+            # candidate artifacts and remain only in the task history.
+            migration_version = "candidate_publication_outbox_v1"
+            migration_done = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version=?",
+                (migration_version,),
+            ).fetchone()
+            if not migration_done:
+                legacy_rows = conn.execute(
+                    "SELECT task_id, candidate_result, created_at, updated_at "
+                    "FROM tasks WHERE candidate_result IS NOT NULL "
+                    "AND status NOT IN ('queued', 'running')"
+                ).fetchall()
+                migration_now = datetime.now(timezone.utc).isoformat()
+                for legacy_row in legacy_rows:
+                    try:
+                        legacy_candidate = json.loads(legacy_row[1])
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise ValueError(
+                            "legacy task candidate_result contains invalid JSON"
+                        ) from exc
+                    if not isinstance(legacy_candidate, dict):
+                        raise ValueError("legacy task candidate_result must be an object")
+                    legacy_candidate_id = legacy_candidate.get("candidate_id")
+                    if isinstance(legacy_candidate_id, str) and legacy_candidate_id.strip():
+                        conn.execute(
+                            "INSERT OR IGNORE INTO candidate_publications "
+                            "(task_id, candidate_id, candidate_result, status, created_at) "
+                            "VALUES (?, ?, ?, 'pending', ?)",
+                            (
+                                legacy_row[0],
+                                legacy_candidate_id,
+                                legacy_row[1],
+                                legacy_row[3] or legacy_row[2] or migration_now,
+                            ),
+                        )
+                conn.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (migration_version, migration_now),
+                )
             conn.commit()
             # SQLite may create WAL/SHM during schema migration; lock them down
             # after creation, before other workers begin using this path.
@@ -296,6 +360,11 @@ def mark_task_completed(
     if candidate_status not in {"candidate", "blocked", "failed"}:
         raise ValueError("candidate status must be candidate, blocked, or failed")
 
+    serialized_candidate = json.dumps(
+        candidate_result, ensure_ascii=False, allow_nan=False
+    )
+    candidate_id = candidate_result.get("candidate_id")
+
     init_db()
     now = datetime.now(timezone.utc).isoformat()
     with _get_conn() as conn:
@@ -309,7 +378,7 @@ def mark_task_completed(
             """,
             (
                 candidate_status,
-                json.dumps(candidate_result, ensure_ascii=False, allow_nan=False),
+                serialized_candidate,
                 result_id,
                 now,
                 task_id,
@@ -317,7 +386,72 @@ def mark_task_completed(
                 now,
             ),
         )
-        return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            return False
+
+        # The task result and its publication intent commit in the same SQLite
+        # transaction. A worker crash after this point is repaired from this outbox.
+        if isinstance(candidate_id, str) and candidate_id.strip():
+            conn.execute(
+                "INSERT INTO candidate_publications "
+                "(task_id, candidate_id, candidate_result, status, created_at) "
+                "VALUES (?, ?, ?, 'pending', ?)",
+                (task_id, candidate_id, serialized_candidate, now),
+            )
+        return True
+
+
+def get_pending_candidate_publications(limit: int = 100) -> list[dict]:
+    """Return a bounded batch of durable candidate publications awaiting JSONL."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    init_db()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT task_id, candidate_id, candidate_result FROM candidate_publications "
+            "WHERE status='pending' ORDER BY created_at, task_id LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    publications = []
+    for row in rows:
+        try:
+            candidate = json.loads(row["candidate_result"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("candidate publication outbox contains invalid JSON") from exc
+        if not isinstance(candidate, dict):
+            raise ValueError("candidate publication outbox entry must be an object")
+        publications.append({
+            "task_id": row["task_id"],
+            "candidate_id": row["candidate_id"],
+            "candidate_result": candidate,
+        })
+    return publications
+
+
+def mark_candidate_publication_published(task_id: str, candidate_id: str) -> bool:
+    """Acknowledge a JSONL projection; a repeated acknowledgement is idempotent."""
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    if not isinstance(candidate_id, str) or not candidate_id.strip():
+        raise ValueError("candidate_id is required")
+
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE candidate_publications SET status='published', published_at=? "
+            "WHERE task_id=? AND candidate_id=? AND status='pending'",
+            (now, task_id, candidate_id),
+        )
+        if cursor.rowcount == 1:
+            return True
+        row = conn.execute(
+            "SELECT status FROM candidate_publications "
+            "WHERE task_id=? AND candidate_id=?",
+            (task_id, candidate_id),
+        ).fetchone()
+        return bool(row and row["status"] == "published")
 
 def mark_result_accepted(result_id: str) -> int:
     """Close all task states linked to an independently accepted result."""

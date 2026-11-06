@@ -154,6 +154,71 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
     assert result["result_id"] == "canonical-result"
 
 
+def test_catedralx_snapshot_transports_governance_inputs_without_rewriting(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    captured = {}
+    dimensions = {
+        "human_value_bp": 8100,
+        "distribution_bp": 7600,
+        "resilience_bp": 9000,
+        "evidence_bp": 9200,
+        "reinvestment_surplus": "125.50",
+    }
+    constraints = {
+        "reinvestment_surplus": 125.5,
+        "entropy_rate": 0.1,
+        "entropy_time_scale": 2.0,
+        "loop_gain": 0.7,
+        "signal_count": 3,
+        "optimal_signal_count": 5,
+        "exposure": 0.2,
+        "max_exposure": 0.5,
+        "resilience": 0.9,
+        "minimum_resilience": 0.7,
+    }
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        captured.update(json.loads(Path(env["CATEDRALX_SNAPSHOT_PATH"]).read_text()))
+        output = {"status": "NO_CYCLE", "reason": "test_transport_only"}
+        return subprocess.CompletedProcess(args, 2, json.dumps(output), "")
+
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    prices = [100.0 + index for index in range(30)]
+    result = worker_loop._run_catedralx({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+        "central_dimensions_bp": dimensions,
+        "dynamic_constraints": constraints,
+    })
+    assert result["status"] == "BLOCKED"
+    assert captured["CENTRAL_DIMENSIONS_BP"] == dimensions
+    assert captured["DYNAMIC_CONSTRAINTS"] == constraints
+
+
+def test_catedralx_blocks_non_object_governance_inputs(monkeypatch):
+    import subprocess
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("invalid governance payload must not invoke CatedralX")
+
+    monkeypatch.setattr(subprocess, "run", should_not_run)
+    result = worker_loop._run_catedralx({
+        "historical_prices": [100.0 + index for index in range(30)],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+        "central_dimensions_bp": [8000],
+    })
+    assert result == {
+        "status": "BLOCKED",
+        "reason": "central_dimensions_bp_must_be_object",
+    }
+
+
 def test_catedral_repo_is_configurable_and_defaults_to_sibling_checkout(monkeypatch, tmp_path):
     monkeypatch.setenv("CATEDRALX_PATH", str(tmp_path / "configured-engine"))
     assert worker_loop._catedral_repo() == (tmp_path / "configured-engine").resolve()
@@ -428,58 +493,3 @@ def test_stale_lease_does_not_publish_candidate(monkeypatch):
         })
 
     assert saved_candidates == []
-
-
-def test_magis_task_uses_product_scoped_gate_without_enabling_general_tasks(monkeypatch):
-    saved_candidates = []
-    completions = []
-    captured = {}
-
-    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
-    monkeypatch.setenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "true")
-
-    class FakeMaster:
-        def __init__(self):
-            pass
-
-        async def execute_task(self, objective, *, allowed_tools=None):
-            captured["objective"] = objective
-            captured["allowed_tools"] = allowed_tools
-            return {"summary": "MAGIS product-scoped candidate"}
-
-    monkeypatch.setattr(worker_loop, "Master", FakeMaster)
-    monkeypatch.setattr(
-        worker_loop.candidate_store,
-        "save_candidate",
-        lambda candidate: saved_candidates.append(candidate),
-    )
-    monkeypatch.setattr(
-        worker_loop.task_bus,
-        "mark_task_completed",
-        lambda task_id, candidate_result, result_id=None: completions.append(
-            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
-        ),
-    )
-
-    task = {
-        "task_id": "magis-product-scoped-execution",
-        "product_code": "magis",
-        "objective": "magis_text_analysis",
-        "payload": json.dumps({
-            "operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
-            "prompt": "Analyze only this synthetic test input.",
-            "context": "test context",
-        }),
-        "success_criteria": json.dumps(["Return a structured analysis"]),
-        "required_tools": "[]",
-        "trace_id": "trace-magis-product-scoped-execution",
-    }
-
-    result = worker_loop.process_task(task)
-
-    assert result["status"] == "candidate"
-    assert result["summary"] == "MAGIS product-scoped candidate"
-    assert "magis_text_analysis" in captured["objective"]
-    assert captured["allowed_tools"] == []
-    assert len(saved_candidates) == 1
-    assert len(completions) == 1

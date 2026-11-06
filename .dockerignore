@@ -19,3 +19,5 @@ htmlcov/
 **/*.pem
 **/*.key
 **/service_account*.json
+.venv_test/
+.venv_DEPRECATED_*/
