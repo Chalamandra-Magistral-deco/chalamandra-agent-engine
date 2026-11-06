@@ -66,6 +66,9 @@ Ollama es el único adaptador verificado por la suite local actual. Para habilit
 - `CHALAMANDRA_API_HOST`, `CHALAMANDRA_API_PORT`: la API solo permite loopback; por defecto `127.0.0.1:8766`.
 - `CHALAMANDRA_API_TOKEN`: token bearer para los POST y para todas las rutas cuando se configura.
 - `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Para activar planificación/ejecución de tareas exige además un token.
+- `CHALAMANDRA_MAGIS_JWT_SECRET`: secreto independiente para la identidad server-to-server `magis-service`; no reutilizar el JWT general ni el de CatedralX.
+- `CHALAMANDRA_MAGIS_EXECUTION_ENABLED`: gate exclusivo del producto MAGIS; permanece `false` por defecto y no habilita `/v1/plan` ni `/v1/tasks` generales. API y Worker deben recibir el mismo estado aprobado de este gate.
+
 
 ### Ollama Cloud (opcional)
 
@@ -95,6 +98,9 @@ Rutas disponibles:
 - `GET /v1/inspect`: modelos, herramientas, perfiles y capacidades registradas; nunca devuelve valores secretos.
 - `GET /v1/agents`, `GET /v1/tools`: descubrimiento de perfiles/herramientas.
 - `POST /v1/tool-calls`: invoca una herramienta estructurada y valida el perfil autorizado mediante `Master.execute_agent_tool_call`.
+- `POST /internal/v1/products/magis/requests`: admisión de texto MAGIS con JWT `magis-service`, scope `magis:execute`, contrato cerrado e idempotencia por operación.
+- `GET /internal/v1/products/magis/jobs/{task_id}` y `GET /internal/v1/products/magis/results/{candidate_id}`: lectura limitada a tareas MAGIS; los resultados solo se entregan después de aceptación independiente. Requieren scope `magis:read`.
+
 - `POST /v1/plan`: planificación con modelos; requiere `CHALAMANDRA_API_ENABLE_MODEL_CALLS=true` y token.
 - `POST /v1/tasks`: ejecución del flujo de tarea; requiere la misma activación explícita y token.
 

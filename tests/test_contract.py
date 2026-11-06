@@ -127,13 +127,28 @@ def test_internal_tasks_results_requires_auth(local_api):
     )
     assert status == 401, f"sin token esperaba 401, obtuve {status}"
 
+    status, result = request(
+        port, f"/internal/v1/tasks/{task_id}/results",
+        method="POST",
+        payload={"candidate_id": "cand-1", "status": "accepted", "lease_token": "not-valid"},
+        headers={"Authorization": f"Bearer {make_jwt('tasks:complete')}"},
+    )
+    assert status == 400
+    assert result["error"] == "invalid_candidate_status"
+
+    claim = task_bus.get_next_task()
+    assert claim is not None and claim["task_id"] == task_id
     status, _ = request(
         port, f"/internal/v1/tasks/{task_id}/results",
         method="POST",
-        payload={"candidate_id": "cand-1", "status": "accepted"},
+        payload={
+            "candidate_id": "cand-1",
+            "status": "candidate",
+            "lease_token": claim["lease_token"],
+        },
         headers={"Authorization": f"Bearer {make_jwt('tasks:complete')}"},
     )
-    assert status == 202, f"con token esperaba 202, obtuve {status}"
+    assert status == 202
 
 
 def test_internal_orchestration_runs_get_requires_auth(local_api):
@@ -200,10 +215,14 @@ def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(loca
     assert len(tasks) == 1
     assert json.loads(tasks[0]["payload"]) == payload
 
+    claimed = task_bus.get_next_task()
+    assert claimed is not None
+    assert claimed["task_id"] == tasks[0]["task_id"]
     task_bus.mark_task_completed(
         tasks[0]["task_id"],
         {"status": "candidate", "candidate_id": "candidate-test"},
         result_id="candidate-test",
+        lease_token=claimed["lease_token"],
     )
     status, run = request(
         port,

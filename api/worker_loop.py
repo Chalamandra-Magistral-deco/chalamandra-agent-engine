@@ -352,11 +352,18 @@ def process_task(task: dict) -> dict:
                 summary = f"CatedralX no produjo un resultado elegible: {result.get('reason', result.get('status', 'unknown'))}"
                 status = "blocked"
         else:
-            model_calls_enabled = os.getenv(
-                "CHALAMANDRA_API_ENABLE_MODEL_CALLS", ""
-            ).strip().lower() in {"1", "true", "yes", "on"}
+            is_magis_task = task.get("product_code") == "magis"
+            execution_gate = (
+                "CHALAMANDRA_MAGIS_EXECUTION_ENABLED"
+                if is_magis_task
+                else "CHALAMANDRA_API_ENABLE_MODEL_CALLS"
+            )
+            model_calls_enabled = os.getenv(execution_gate, "").strip().lower() in {
+                "1", "true", "yes", "on"
+            }
             if (
-                not model_calls_enabled
+                not is_magis_task
+                and not model_calls_enabled
                 and objective.strip() == "catedralx_economic_proposal_review"
             ):
                 # This restricted economic path is deterministic and requires no model call.
@@ -495,14 +502,20 @@ def process_task(task: dict) -> dict:
         "orders_created": False,
         "orders_executed": False,
     }
-    # Save the candidate and expose its identifier through the task status.
-    candidate_store.save_candidate(candidate_result)
+    # The SQLite task row is authoritative: a candidate is publishable to the
+    # append-only candidate store only after its current, unexpired lease wins.
     completion_options = {}
     if task.get("lease_token") is not None:
         completion_options["lease_token"] = task["lease_token"]
-    task_bus.mark_task_completed(
+    completion_recorded = task_bus.mark_task_completed(
         task_id, candidate_result, result_id=task_result_id, **completion_options
     )
+    if completion_recorded is False:
+        raise RuntimeError(
+            "candidate completion rejected: worker lease is missing, invalid, or expired; "
+            "candidate was not published"
+        )
+    candidate_store.save_candidate(candidate_result)
     return candidate_result
 
 def _run_worker_loop(stop_event=None):

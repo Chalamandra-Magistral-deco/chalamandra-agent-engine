@@ -2,6 +2,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from api import worker_loop
 
 
@@ -194,10 +196,11 @@ def test_worker_blocks_stale_observation_before_calling_catedralx(monkeypatch):
     assert result == {"status": "BLOCKED", "reason": "stale_observation"}
 
 
-def test_general_task_is_blocked_when_model_calls_are_disabled(monkeypatch):
+def test_general_task_stays_blocked_when_only_magis_gate_is_enabled(monkeypatch):
     saved_candidates = []
     completion_calls = []
 
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
     monkeypatch.setattr(
         worker_loop.candidate_store, "save_candidate",
@@ -389,3 +392,94 @@ def test_authorized_business_proposal_fails_closed_without_approval(monkeypatch)
     assert result["evidence"] == []
     assert saved[0]["status"] == "blocked"
     assert completed[0]["status"] == "blocked"
+
+
+def test_stale_lease_does_not_publish_candidate(monkeypatch):
+    saved_candidates = []
+    monkeypatch.setattr(
+        worker_loop, "_run_catedralx",
+        lambda payload: {
+            "result_id": "stale-lease-result",
+            "status": "ACCEPTED",
+            "decision": "hold",
+            "orders_created": False,
+            "orders_executed": False,
+        },
+    )
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus, "mark_task_completed",
+        lambda *args, **kwargs: False,
+    )
+
+    with pytest.raises(RuntimeError, match="lease is missing, invalid, or expired"):
+        worker_loop.process_task({
+            "task_id": "stale-lease-worker-test",
+            "objective": "financial_analysis",
+            "payload": json.dumps({
+                "historical_prices": [1.10, 1.11, 1.12],
+                "current_price": 1.13,
+            }),
+            "trace_id": "trace-stale-lease-worker-test",
+            "lease_token": "expired-worker-lease",
+        })
+
+    assert saved_candidates == []
+
+
+def test_magis_task_uses_product_scoped_gate_without_enabling_general_tasks(monkeypatch):
+    saved_candidates = []
+    completions = []
+    captured = {}
+
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "true")
+
+    class FakeMaster:
+        def __init__(self):
+            pass
+
+        async def execute_task(self, objective, *, allowed_tools=None):
+            captured["objective"] = objective
+            captured["allowed_tools"] = allowed_tools
+            return {"summary": "MAGIS product-scoped candidate"}
+
+    monkeypatch.setattr(worker_loop, "Master", FakeMaster)
+    monkeypatch.setattr(
+        worker_loop.candidate_store,
+        "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus,
+        "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completions.append(
+            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
+        ),
+    )
+
+    task = {
+        "task_id": "magis-product-scoped-execution",
+        "product_code": "magis",
+        "objective": "magis_text_analysis",
+        "payload": json.dumps({
+            "operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+            "prompt": "Analyze only this synthetic test input.",
+            "context": "test context",
+        }),
+        "success_criteria": json.dumps(["Return a structured analysis"]),
+        "required_tools": "[]",
+        "trace_id": "trace-magis-product-scoped-execution",
+    }
+
+    result = worker_loop.process_task(task)
+
+    assert result["status"] == "candidate"
+    assert result["summary"] == "MAGIS product-scoped candidate"
+    assert "magis_text_analysis" in captured["objective"]
+    assert captured["allowed_tools"] == []
+    assert len(saved_candidates) == 1
+    assert len(completions) == 1
