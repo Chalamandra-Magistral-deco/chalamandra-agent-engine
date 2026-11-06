@@ -2,6 +2,7 @@
 import asyncio
 import os
 import signal
+import threading
 import multiprocessing
 import sys
 import json
@@ -586,7 +587,21 @@ def main():
         raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe estar entre 1 y 16")
 
     if process_count == 1:
-        _run_worker_loop()
+        stop_event = threading.Event()
+
+        def request_stop(signum, frame):
+            stop_event.set()
+
+        previous_handlers = {
+            signum: signal.signal(signum, request_stop)
+            for signum in (signal.SIGTERM, signal.SIGINT)
+        }
+        try:
+            _run_worker_loop(stop_event)
+        finally:
+            stop_event.set()
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
         return
 
     context = multiprocessing.get_context("spawn")
