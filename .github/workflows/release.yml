@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: ec3d83d2626b51d03936d3eb1efa209aafba3ae3
+          ref: e1dcd47376b5016c4acb2103de1711fa6abc65a8
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: ec3d83d2626b51d03936d3eb1efa209aafba3ae3
+          ref: e1dcd47376b5016c4acb2103de1711fa6abc65a8
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
