@@ -86,11 +86,13 @@ class EngineHTTPServer(ThreadingHTTPServer):
         master: Master | None = None,
         api_token: str | None = None,
         model_calls_enabled: bool = False,
+        magis_execution_enabled: bool = False,
     ) -> None:
         host = str(server_address[0])
         self.host_is_loopback = _is_loopback_host(host)
         self.api_token = api_token.strip() if api_token and api_token.strip() else None
         self.model_calls_enabled = model_calls_enabled
+        self.magis_execution_enabled = magis_execution_enabled
         self.master = master or Master()
         self.execution_lock = threading.Lock()
         raw_limit = os.getenv("CHALAMANDRA_API_MAX_CONCURRENCY", "64")
@@ -183,11 +185,10 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         import jwt
         auth = self.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
-        secret_env = (
-            "CHALAMANDRA_CATEDRALX_JWT_SECRET"
-            if required_subject == "catedralx-service"
-            else "CHALAMANDRA_JWT_SECRET"
-        )
+        secret_env = {
+            "catedralx-service": "CHALAMANDRA_CATEDRALX_JWT_SECRET",
+            "magis-service": "CHALAMANDRA_MAGIS_JWT_SECRET",
+        }.get(required_subject or "", "CHALAMANDRA_JWT_SECRET")
         secret = os.environ.get(secret_env, "")
         if not secret or not token:
             return False
@@ -240,6 +241,76 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
+
+        # Product-scoped MAGIS read contract. A dedicated service JWT can only
+        # inspect MAGIS-owned task/result records; it cannot use general admin routes.
+        if path.startswith("/internal/v1/products/magis/jobs/"):
+            if not self._authorized(
+                require_token=True,
+                required_scope="magis:read",
+                required_subject="magis-service",
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            task_id = path.rsplit("/", 1)[-1]
+            job = task_bus.get_task_status(task_id)
+            if not job or not task_bus.is_magis_task(job):
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "magis_job_not_found"})
+                return
+            self._send_json(HTTPStatus.OK, {
+                "job_id": task_id,
+                "status": job.get("status", "queued"),
+                "trace_id": job.get("trace_id", ""),
+                "result_id": job.get("result_id"),
+                "updated_at": job.get("updated_at", ""),
+            })
+            return
+
+        if path.startswith("/internal/v1/products/magis/results/"):
+            if not self._authorized(
+                require_token=True,
+                required_scope="magis:read",
+                required_subject="magis-service",
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            result_id = path.rsplit("/", 1)[-1]
+            if not task_bus.is_magis_result(result_id):
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "magis_result_not_found"})
+                return
+            result = candidate_store.get_candidate(result_id)
+            if not result:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "result_not_found"})
+                return
+            try:
+                acceptance = acceptance_store.get_acceptance(result_id)
+            except (OSError, ValueError):
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "acceptance_store_unavailable"})
+                return
+            if not acceptance:
+                self._send_json(HTTPStatus.ACCEPTED, {
+                    "status": "pending_verification",
+                    "message": "Result exists but awaits independent acceptance",
+                })
+                return
+            if acceptance.get("outcome") != "accepted":
+                self._send_json(HTTPStatus.FORBIDDEN, {
+                    "error": "result_not_accepted",
+                    "outcome": acceptance.get("outcome"),
+                    "reasons": acceptance.get("reasons", []),
+                })
+                return
+            delivered = dict(result)
+            delivered["delivery_status"] = "accepted"
+            delivered["acceptance"] = {
+                "outcome": "accepted",
+                "decision_id": acceptance.get("decision_id"),
+                "verifier_id": acceptance.get("verifier_id"),
+                "decided_at": acceptance.get("decided_at"),
+                "trace_id": acceptance.get("trace_id"),
+            }
+            self._send_json(HTTPStatus.OK, delivered)
+            return
         if path.startswith("/v1/results/"):
             if not self._authorized(require_token=True, required_scope="results:read"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -348,6 +419,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "service": SERVICE_NAME,
                     "execution_enabled": self.server.model_calls_enabled,
+                    "magis_execution_enabled": self.server.magis_execution_enabled,
                 },
             )
             return
@@ -410,6 +482,88 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
+
+        # MAGIS is a product client, not an administrator. Its dedicated JWT
+        # can enqueue only this bounded text-analysis contract.
+        if path == "/internal/v1/products/magis/requests":
+            if not self._authorized(
+                require_token=True,
+                required_scope="magis:execute",
+                required_subject="magis-service",
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
+            if not self.server.magis_execution_enabled:
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "magis_execution_disabled"})
+                return
+            body = self._read_json_body()
+            if body is None:
+                return
+            if set(body).difference({"operation_id", "prompt", "context"}):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "unexpected_fields"})
+                return
+            operation_id = body.get("operation_id")
+            prompt = body.get("prompt")
+            context = body.get("context", "")
+            try:
+                valid_operation_id = (
+                    isinstance(operation_id, str)
+                    and str(uuid.UUID(operation_id)) == operation_id.lower()
+                )
+            except (ValueError, AttributeError):
+                valid_operation_id = False
+            if not valid_operation_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_operation_id"})
+                return
+            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_prompt"})
+                return
+            if not isinstance(context, str) or len(context) > 8000:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_context"})
+                return
+            idem_key = self.headers.get("Idempotency-Key", "")
+            if idem_key != f"magis-{operation_id}":
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
+                return
+            contract = {
+                "task_id": str(uuid.uuid4()),
+                "run_id": str(uuid.uuid4()),
+                "objective": "magis_text_analysis",
+                "product_code": "magis",
+                "required_tools": [],
+                "success_criteria": [
+                    "Return a structured analysis of the supplied input.",
+                    "Separate evidence, inference, assumptions and unknowns.",
+                    "Do not perform external actions or claim unverified outcomes.",
+                ],
+                "payload": {
+                    "operation_id": operation_id,
+                    "prompt": prompt.strip(),
+                    "context": context,
+                },
+                "trace_id": self.trace_id,
+            }
+            try:
+                task_id = task_bus.enqueue_task(contract, idempotency_key=idem_key)
+            except ValueError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {
+                    "error": "idempotency_conflict",
+                    "detail": str(exc)[:240],
+                })
+                return
+            existing_task = task_bus.get_task_status(task_id)
+            if not existing_task or not task_bus.is_magis_task(existing_task):
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "magis_task_persistence_failed"})
+                return
+            actual_run_id = existing_task.get("run_id")
+            self._send_json(HTTPStatus.ACCEPTED, {
+                "run_id": actual_run_id,
+                "task_id": task_id,
+                "status": existing_task.get("status", "queued"),
+                "trace_id": existing_task.get("trace_id") or self.trace_id,
+                "idempotent_replay": actual_run_id != contract["run_id"],
+            })
+            return
 
         # Create a persisted subscription; production SSRF policy remains in subscription_store.
         if path == "/v1/subscriptions":
@@ -642,13 +796,13 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_success_criteria"})
                 return
 
-            idem_key = self.headers.get("Idempotency-Key")
-            if path == "/v1/request" and not idem_key:
+            request_idem_key = self.headers.get("Idempotency-Key")
+            if path == "/v1/request" and not request_idem_key:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "idempotency_key_required"})
                 return
-            if idem_key is not None and (
-                not idem_key.strip() or len(idem_key) < 8 or len(idem_key) > 128
-                or "\r" in idem_key or "\n" in idem_key
+            if request_idem_key is not None and (
+                not request_idem_key.strip() or len(request_idem_key) < 8 or len(request_idem_key) > 128
+                or "\r" in request_idem_key or "\n" in request_idem_key
             ):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
                 return
@@ -666,7 +820,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 "trace_id": trace_id,
             }
             try:
-                task_id = task_bus.enqueue_task(contract, idempotency_key=idem_key)
+                task_id = task_bus.enqueue_task(contract, idempotency_key=request_idem_key)
             except ValueError as exc:
                 self._send_json(HTTPStatus.CONFLICT, {
                     "error": "idempotency_conflict",
@@ -696,14 +850,31 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 return
             task_id = path.split("/")[-2]
             body = self._read_json_body()
-            if not body:
+            if not isinstance(body, dict) or not body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
-            task_bus.mark_task_completed(task_id, body)
+            lease_token = body.get("lease_token")
+            candidate_result = {key: value for key, value in body.items() if key != "lease_token"}
+            if not isinstance(lease_token, str) or not lease_token.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "lease_token_required"})
+                return
+            if candidate_result.get("status") not in {"candidate", "blocked", "failed"}:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_status"})
+                return
+            try:
+                completed = task_bus.mark_task_completed(
+                    task_id, candidate_result, lease_token=lease_token
+                )
+            except (TypeError, ValueError):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_candidate_result"})
+                return
+            if not completed:
+                self._send_json(HTTPStatus.CONFLICT, {"error": "task_lease_invalid_or_expired"})
+                return
             self._send_json(HTTPStatus.ACCEPTED, {
-                "candidate_id": body.get("candidate_id"),
+                "candidate_id": candidate_result.get("candidate_id"),
                 "verification_status": "pending",
-                "trace_id": body.get("trace_id")
+                "trace_id": candidate_result.get("trace_id")
             })
             return
 
@@ -711,8 +882,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not self._authorized(require_token=True, required_scope="jobs:write"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            idem_key = self.headers.get("Idempotency-Key")
-            if not idem_key or len(idem_key) < 8:
+            job_idem_key = self.headers.get("Idempotency-Key") or ""
+            if len(job_idem_key) < 8:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
                 return
             body = self._read_json_body()
@@ -722,7 +893,6 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             
             # Encolar en el TaskBus unificado
             trace_id = self.trace_id
-            idem_key = self.headers.get("Idempotency-Key")
             try:
                 task_id = task_bus.enqueue_task(
                     {
@@ -730,7 +900,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         "payload": body.get("payload", body),
                         "trace_id": trace_id
                     },
-                    idempotency_key=idem_key
+                    idempotency_key=job_idem_key
                 )
             except ValueError as exc:
                 # TaskBus lanza ValueError si mismo key + payload distinto
@@ -834,6 +1004,10 @@ def create_server(
     model_calls_enabled = os.getenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "").strip().lower() in {
         "1", "true", "yes", "on"
     }
+    magis_execution_enabled = os.getenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    magis_secret = os.getenv("CHALAMANDRA_MAGIS_JWT_SECRET", "").strip()
 
     if not _is_loopback_host(bind_host):
         raise ValueError(
@@ -844,6 +1018,10 @@ def create_server(
         raise ValueError(
             "CHALAMANDRA_API_TOKEN es obligatorio al habilitar llamadas a modelos"
         )
+    if magis_execution_enabled and len(magis_secret) < 32:
+        raise ValueError(
+            "CHALAMANDRA_MAGIS_JWT_SECRET de al menos 32 caracteres es obligatorio al habilitar MAGIS"
+        )
 
     return EngineHTTPServer(
         (bind_host, bind_port),
@@ -851,6 +1029,7 @@ def create_server(
         master=master,
         api_token=token,
         model_calls_enabled=model_calls_enabled,
+        magis_execution_enabled=magis_execution_enabled,
     )
 
 
