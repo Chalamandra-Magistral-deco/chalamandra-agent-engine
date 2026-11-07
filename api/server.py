@@ -427,6 +427,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not self._authorized(require_token=True, required_scope="results:read"):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
+            if not self._authorized(require_token=True):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+                return
             self._send_json(HTTPStatus.OK, self.server.master.inspect())
             return
         if path == "/v1/agents":
@@ -455,6 +458,9 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         self.trace_id = self._get_trace_id()
         path = urlsplit(self.path).path
+        if not self._authorized(require_token=True):
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+            return
 
         if path.startswith("/v1/subscriptions/"):
             if not self._authorized(
