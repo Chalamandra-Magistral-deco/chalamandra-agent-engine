@@ -22,3 +22,7 @@ tasks.db-*
 .env
 secrets/
 config/.env
+
+# Auditoría: Ignorar artefactos de respaldo
+*.bak*
+*.pre-*
