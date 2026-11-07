@@ -1,11 +1,11 @@
 services:
   api:
-    image: agents-api:repair-candidate-20261106
+    image: agents-api:candidate-v4.2
     build:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:repair-candidate-20261106
+        CATEDRALX_BASE_IMAGE: catedralx:v4.2
     container_name: agents-api
     ports:
       - "127.0.0.1:8766:8766"
@@ -28,12 +28,12 @@ services:
     networks: [agents_net]
 
   worker:
-    image: agents-worker:repair-candidate-20261106
+    image: agents-worker:candidate-v4.2
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
       args:
-        AGENTS_BASE_IMAGE: agents-api:repair-candidate-20261106
+        AGENTS_BASE_IMAGE: agents-api:candidate-v4.2
     container_name: agents-worker
     env_file:
       - config/.env
