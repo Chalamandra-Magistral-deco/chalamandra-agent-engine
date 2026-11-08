@@ -154,9 +154,18 @@ def reconcile_feedback_once(
                     )
                     cycle_module.registrar_evento(
                         "verify",
-                        {"evidence": evidence, "result": verification_result, "verified_at": now,
-                         "candidate_id": candidate_id, "decision_id": record.get("decision_id"),
-                         "trace_id": record.get("trace_id")},
+                        {
+                            "evidence": evidence,
+                            "result": verification_result,
+                            "verified_at": now,
+                            "candidate_id": candidate_id,
+                            "decision_id": record.get("decision_id"),
+                            "trace_id": record.get("trace_id"),
+                            "independent_check": "ed25519_signature_verifier_identity_and_candidate_digest",
+                            "evidence_recounted": True,
+                            "evidence_recount_method": "recompute_candidate_evidence_digest",
+                            "evidence_recount_scope": "candidate_integrity_only_commercial_impact_unmeasured",
+                        },
                         path=ledger,
                         cycle_id=cycle_id,
                     )

@@ -136,6 +136,15 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
+    monkeypatch.setenv("CATEDRALX_STATE_PATH", "/tmp/state-test.json")
+    monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", "/tmp/results-test.jsonl")
+    monkeypatch.setenv("CATEDRALX_FEEDBACK_PATH", "/tmp/feedback-test.jsonl")
+    monkeypatch.setenv("CATEDRALX_PANIC_PATH", "/tmp/panic-test")
+    monkeypatch.setenv("UNRELATED_SECRET_SENTINEL", "must-not-propagate")
+    monkeypatch.setenv("CATEDRALX_DSX_AUTH_SECRET", "must-not-propagate")
+    monkeypatch.setenv("CATEDRALX_FEX_EVIDENCE_SECRET", "must-not-propagate")
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", "must-not-propagate")
+
     prices = [1.10 + index * 0.001 for index in range(30)]
     observed_at = datetime.now(timezone.utc).isoformat()
     result = worker_loop._run_catedralx({
@@ -148,6 +157,19 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
 
     assert captured["env"]["CATEDRALX_PYTHON"] == sys.executable
     assert captured["env"]["CATEDRALX_TRACE_ID"] == "1234567890abcdef1234567890abcdef"
+    assert captured["env"]["CATEDRALX_STATE_PATH"] == "/tmp/state-test.json"
+    assert captured["env"]["CATEDRALX_RESULT_STORE_PATH"] == "/tmp/results-test.jsonl"
+    assert captured["env"]["CATEDRALX_FEEDBACK_PATH"] == "/tmp/feedback-test.jsonl"
+    assert captured["env"]["CATEDRALX_PANIC_PATH"] == "/tmp/panic-test"
+
+    for name in (
+        "UNRELATED_SECRET_SENTINEL",
+        "CATEDRALX_DSX_AUTH_SECRET",
+        "CATEDRALX_FEX_EVIDENCE_SECRET",
+        "CHALAMANDRA_CATEDRALX_JWT_SECRET",
+    ):
+        assert name not in captured["env"]
+
     assert captured["cwd"] == tmp_path
     assert captured["timeout"] == 60
     assert result["status"] == "ACCEPTED"

@@ -1,5 +1,2 @@
-# Dependencies for tests, lint, and static typing.
-pytest>=8.3,<10
-pytest-asyncio>=0.24,<2
-ruff>=0.14
-mypy>=1.18
+# Compatibility entry point. Base and development dependencies live in pyproject.toml.
+.[dev]

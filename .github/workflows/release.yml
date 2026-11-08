@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: 563048442aed645236445d9de959d282989d970a
+          ref: d11b010664807c93f30d478b72da05e058e5f25c
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -36,14 +36,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            pyproject.toml
+          cache-dependency-path: pyproject.toml
 
       - name: Install project and test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
           python -m pip install -e ".[dev]"
           python -m pip check
 
@@ -80,7 +77,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: 563048442aed645236445d9de959d282989d970a
+          ref: d11b010664807c93f30d478b72da05e058e5f25c
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -89,14 +86,41 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build pinned canonical CatedralX base image
-        run: docker build --pull --tag catedralx:v1.0-canonico --file deploy/CatedralX.Dockerfile .
+        run: |
+          CATEDRALX_REVISION="$(git -C CatedralX rev-parse HEAD)"
+          docker build --pull --tag catedralx:v1.0-canonico \
+            --build-arg CATEDRALX_REVISION="$CATEDRALX_REVISION" \
+            --build-arg CATEDRALX_CODE_DIRTY=false \
+            --file deploy/CatedralX.Dockerfile .
 
       - name: Build deployment image (fail closed)
-        run: docker build --tag chalamandra-agents:ci --file deploy/Dockerfile .
+        run: |
+          AGENTS_REVISION="$(git rev-parse HEAD)"
+          CATEDRALX_REVISION="$(git -C CatedralX rev-parse HEAD)"
+          docker build --tag chalamandra-agents:ci \
+            --build-arg AGENTS_REVISION="$AGENTS_REVISION" \
+            --build-arg AGENTS_CODE_DIRTY=false \
+            --build-arg CATEDRALX_REVISION="$CATEDRALX_REVISION" \
+            --build-arg CATEDRALX_CODE_DIRTY=false \
+            --file deploy/Dockerfile .
+
+      - name: Verify image provenance labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          agents_revision="$(git rev-parse HEAD)"
+          catedralx_revision="$(git -C CatedralX rev-parse HEAD)"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.agents.revision"}}' chalamandra-agents:ci)" = "$agents_revision"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.agents.code.dirty"}}' chalamandra-agents:ci)" = "false"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.catedralx.revision"}}' chalamandra-agents:ci)" = "$catedralx_revision"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}' chalamandra-agents:ci)" = "false"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.catedralx.revision"}}' catedralx:v1.0-canonico)" = "$catedralx_revision"
+          test "$(docker image inspect --format='{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}' catedralx:v1.0-canonico)" = "false"
+          echo "Agents and embedded CatedralX image provenance verified."
 
       - name: Verify bundled CatedralX imports
         run: |
-          docker run --rm --entrypoint python chalamandra-agents:ci -c 'import sys; sys.path.insert(0, "/app/CatedralX/elite"); import psutil; import REASON.razon; print("CatedralX imports OK; psutil", psutil.__version__)'
+          docker run --rm --entrypoint python chalamandra-agents:ci -c 'import sys; sys.path.insert(0, "/app/CatedralX/elite"); import psutil; import cryptography; import REASON.razon; import FEX.GOVERNANCE.economic_cycle; from AEX.DECISION import ordenes; print("CatedralX modules OK; psutil", psutil.__version__, "cryptography", cryptography.__version__)'
 
       - name: Start container and verify its health check
         shell: bash

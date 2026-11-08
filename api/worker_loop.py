@@ -111,7 +111,21 @@ def _run_catedralx(payload: dict) -> dict:
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
 
-    env = os.environ.copy()
+    _ALLOWED = (
+        "CATEDRALX_PATH",
+        "CATEDRALX_STATE_PATH",
+        "CATEDRALX_RESULT_STORE_PATH",
+        "CATEDRALX_SNAPSHOT_PATH",
+        "CATEDRALX_FEEDBACK_PATH",
+        "CATEDRALX_PANIC_PATH",
+        "CATEDRALX_TRACE_ID",
+        "CATEDRALX_PYTHON",
+        "PATH",
+        "PYTHONPATH",
+        "HOME",
+        "TMPDIR",
+    )
+    env = {k: v for k, v in os.environ.items() if k in _ALLOWED}
     env["CATEDRALX_SNAPSHOT_PATH"] = temp_path
     # Propagate W3C trace identity through the subprocess without changing the market snapshot schema.
     import re
@@ -562,6 +576,11 @@ def _run_worker_loop(stop_event=None):
                 "[worker] candidate publications reconciled "
                 f"recovered={publication_report['recovered']} "
                 f"already_present={publication_report['already_present']}"
+            )
+        if publication_report["conflicted"]:
+            print(
+                "[worker] candidate publications quarantined "
+                f"conflicted={publication_report['conflicted']}"
             )
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task()

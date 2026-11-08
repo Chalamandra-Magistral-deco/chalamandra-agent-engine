@@ -69,6 +69,7 @@ def test_reconciliation_recovers_sqlite_commit_without_duplicate_jsonl():
         "examined": 1,
         "recovered": 1,
         "already_present": 0,
+        "conflicted": 0,
         "published": 1,
     }
     assert candidate_store.get_candidate(candidate["candidate_id"]) == candidate
@@ -78,6 +79,7 @@ def test_reconciliation_recovers_sqlite_commit_without_duplicate_jsonl():
         "examined": 0,
         "recovered": 0,
         "already_present": 0,
+        "conflicted": 0,
         "published": 0,
     }
     path = candidate_store._candidates_file()
@@ -111,10 +113,13 @@ def test_reconciliation_rejects_outbox_candidate_id_mismatch():
             (json.dumps({"candidate_id": "different-id", "status": "candidate"}), task_id),
         )
 
-    with pytest.raises(ValueError, match="candidate_id mismatch"):
-        candidate_store.reconcile_pending_publications()
+    report = candidate_store.reconcile_pending_publications()
+    assert report["conflicted"] == 1
     assert candidate_store.get_candidate("different-id") is None
-    assert len(task_bus.get_pending_candidate_publications()) == 1
+    assert task_bus.get_pending_candidate_publications() == []
+    blocked = task_bus.get_blocked_candidate_publications()
+    assert len(blocked) == 1
+    assert "candidate_id mismatch" in blocked[0]["last_error"]
 
 
 def test_init_db_backfills_legacy_sqlite_candidate_results_once(tmp_path, monkeypatch):
@@ -184,3 +189,89 @@ def test_worker_reconciles_outbox_before_claiming_more_tasks(monkeypatch):
 
     assert candidate_store.get_candidate(candidate["candidate_id"]) == candidate
     assert task_bus.get_pending_candidate_publications() == []
+
+
+def test_duplicate_candidate_id_conflict_is_quarantined_and_other_entries_continue():
+    first = {"candidate_id": "historical-duplicate", "status": "candidate", "value": "A"}
+    second = {"candidate_id": "historical-duplicate", "status": "candidate", "value": "B"}
+    independent = {"candidate_id": "independent-candidate", "status": "candidate"}
+
+    _complete_task(first)
+    _complete_task(second)
+    _complete_task(independent)
+
+    report = candidate_store.reconcile_pending_publications()
+
+    assert report == {
+        "examined": 3,
+        "recovered": 2,
+        "already_present": 0,
+        "conflicted": 1,
+        "published": 2,
+    }
+    assert candidate_store.get_candidate("historical-duplicate") == first
+    assert candidate_store.get_candidate("independent-candidate") == independent
+    assert task_bus.get_pending_candidate_publications() == []
+    blocked = task_bus.get_blocked_candidate_publications()
+    assert len(blocked) == 1
+    assert blocked[0]["candidate_id"] == "historical-duplicate"
+    assert "candidate_id conflict" in blocked[0]["last_error"]
+
+    assert candidate_store.reconcile_pending_publications() == {
+        "examined": 0,
+        "recovered": 0,
+        "already_present": 0,
+        "conflicted": 0,
+        "published": 0,
+    }
+
+
+def test_existing_outbox_schema_migrates_last_error_column(tmp_path, monkeypatch):
+    db_path = tmp_path / "pre-quarantine.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE candidate_publications (
+                task_id TEXT PRIMARY KEY,
+                candidate_id TEXT NOT NULL,
+                candidate_result TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'published')),
+                created_at TEXT NOT NULL,
+                published_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO candidate_publications "
+            "(task_id, candidate_id, candidate_result, status, created_at) "
+            "VALUES (?, ?, ?, 'pending', ?)",
+            ("legacy-task", "legacy-id", json.dumps({"candidate_id": "legacy-id"}), "2026-11-01"),
+        )
+
+    monkeypatch.setattr(task_bus, "_db_path", lambda: db_path)
+    monkeypatch.setattr(task_bus, "_DB_READY_PATH", None)
+    task_bus.init_db()
+
+    with task_bus._get_conn() as conn:
+        columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(candidate_publications)"
+        ).fetchall()}
+    assert "last_error" in columns
+    assert len(task_bus.get_pending_candidate_publications()) == 1
+
+
+def test_blocked_publication_can_only_be_retried_explicitly():
+    candidate = {"candidate_id": "retry-after-repair", "status": "candidate"}
+    task_id = _complete_task(candidate)
+    assert task_bus.mark_candidate_publication_blocked(
+        task_id, candidate["candidate_id"], "test conflict"
+    ) is True
+    assert task_bus.get_pending_candidate_publications() == []
+    assert task_bus.retry_blocked_candidate_publication(
+        task_id, candidate["candidate_id"]
+    ) is True
+    assert len(task_bus.get_pending_candidate_publications()) == 1
+    assert task_bus.retry_blocked_candidate_publication(
+        task_id, candidate["candidate_id"]
+    ) is False

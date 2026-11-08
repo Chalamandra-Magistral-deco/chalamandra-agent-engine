@@ -28,7 +28,22 @@ from api import acceptance_store, candidate_store, crypto_signer  # noqa: E402
 from api.catedralx_feedback import reconcile_feedback_once  # noqa: E402
 
 
-def _authorized_cycle(path: Path) -> str:
+def _inject_test_approver_identity_verifier(monkeypatch) -> None:
+    from AEX.DECISION import ordenes
+
+    monkeypatch.setattr(
+        ordenes,
+        "APPROVER_IDENTITY_VERIFIER",
+        lambda assertion, context, amount: {
+            "verified": isinstance(assertion, dict) and assertion.get("signed") == "test-only-assertion",
+            "subject": assertion.get("subject") if isinstance(assertion, dict) else None,
+            "permissions": ["economic_cycle_authorize"],
+        },
+    )
+
+
+def _authorized_cycle(path: Path, monkeypatch) -> str:
+    _inject_test_approver_identity_verifier(monkeypatch)
     cycle_id = registrar_evento(
         "measure",
         {"metric": "qualified_leads", "source": "synthetic_test", "period": "2026-10",
@@ -38,8 +53,12 @@ def _authorized_cycle(path: Path) -> str:
     )
     registrar_evento("evaluate", {"assessment": "synthetic assessment", "evidence": "synthetic only"}, path=path, cycle_id=cycle_id)
     registrar_evento("propose", {"proposal": "synthetic proposal", "expected_outcome": "reviewable candidate",
-                                  "verification_plan": "measure observed outcome later"}, path=path, cycle_id=cycle_id)
-    registrar_evento("authorize", {"approved": True, "approver": "test-owner", "rationale": "analysis only"},
+                                  "verification_plan": "measure observed outcome later",
+                                  "source": "synthetic_test_fixture", "method": "fixed_fixture",
+                                  "evidence_ref": "test-fixture://catedralx-feedback/qualified_leads"},
+                     path=path, cycle_id=cycle_id)
+    registrar_evento("authorize", {"approved": True, "approver": "test-owner", "rationale": "analysis only",
+                                  "identity_assertion": {"signed": "test-only-assertion", "subject": "test-owner"}},
                      path=path, cycle_id=cycle_id)
     return cycle_id
 
@@ -63,7 +82,7 @@ def _signed_acceptance(candidate: dict, signing_key: SigningKey, verifier_id: st
 
 def test_verified_business_acceptance_closes_economic_cycle_once(monkeypatch, tmp_path):
     ledger = tmp_path / "impact_cycle.jsonl"
-    cycle_id = _authorized_cycle(ledger)
+    cycle_id = _authorized_cycle(ledger, monkeypatch)
     signing_key = SigningKey(bytes(range(32)))
     verifier_id = "feedback-test-verifier"
     monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
@@ -103,7 +122,7 @@ def test_verified_business_acceptance_closes_economic_cycle_once(monkeypatch, tm
 
 def test_invalid_signature_does_not_advance_business_cycle(monkeypatch, tmp_path):
     ledger = tmp_path / "impact_cycle.jsonl"
-    cycle_id = _authorized_cycle(ledger)
+    cycle_id = _authorized_cycle(ledger, monkeypatch)
     verifier_id = "feedback-test-verifier"
     signing_key = SigningKey(bytes(range(32)))
     monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))

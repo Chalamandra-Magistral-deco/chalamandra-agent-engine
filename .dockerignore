@@ -29,3 +29,10 @@ logs/
 **/*.pfx
 **/*.sqlite
 **/*.db
+**/*.env
+
+# AG-02b: nunca copiar copias de env a la imagen
+**/*.env.save
+**/*.env.save.*
+**/*.save
+config/*.save*

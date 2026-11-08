@@ -53,24 +53,36 @@ def save_candidate(candidate: dict) -> str:
 
 
 def reconcile_pending_publications(limit: int = 100) -> dict[str, int]:
-    """Project committed SQLite outbox entries into the append-only candidate ledger."""
+    """Project valid outbox entries and quarantine conflicts without blocking later entries."""
     from api import task_bus
 
     pending = task_bus.get_pending_candidate_publications(limit=limit)
     recovered = 0
     already_present = 0
+    conflicted = 0
 
     for publication in pending:
         candidate = publication["candidate_result"]
         candidate_id = publication["candidate_id"]
-        if candidate.get("candidate_id") != candidate_id:
-            raise ValueError(
-                "candidate publication outbox conflict: candidate_id mismatch"
-            )
-
-        saved_id, inserted = _save_candidate(candidate)
-        if saved_id != candidate_id:
-            raise ValueError("candidate publication outbox conflict: invalid candidate id")
+        try:
+            if candidate.get("candidate_id") != candidate_id:
+                raise ValueError(
+                    "candidate publication outbox conflict: candidate_id mismatch"
+                )
+            saved_id, inserted = _save_candidate(candidate)
+            if saved_id != candidate_id:
+                raise ValueError(
+                    "candidate publication outbox conflict: invalid candidate id"
+                )
+        except ValueError as exc:
+            if not task_bus.mark_candidate_publication_blocked(
+                publication["task_id"], candidate_id, str(exc)
+            ):
+                raise RuntimeError(
+                    "candidate publication conflict could not be quarantined"
+                ) from exc
+            conflicted += 1
+            continue
 
         if not task_bus.mark_candidate_publication_published(
             publication["task_id"], candidate_id
@@ -86,6 +98,7 @@ def reconcile_pending_publications(limit: int = 100) -> dict[str, int]:
         "examined": len(pending),
         "recovered": recovered,
         "already_present": already_present,
+        "conflicted": conflicted,
         "published": recovered + already_present,
     }
 

@@ -91,3 +91,23 @@ def test_prototype_contains_no_shell_execution():
                 keyword.value.value is True
                 for keyword in node.keywords
             )
+
+
+def test_module_import_does_not_require_vm_repositories_directory(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    missing_repos = tmp_path / "repos-does-not-exist"
+    env = os.environ.copy()
+    env["CHALAMANDRA_REPOS_ROOT"] = str(missing_repos)
+    result = subprocess.run(
+        [sys.executable, "-c", "import agente_elite; print('import-ok')"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "import-ok" in result.stdout

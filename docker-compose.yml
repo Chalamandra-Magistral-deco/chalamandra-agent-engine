@@ -6,6 +6,10 @@ services:
       dockerfile: deploy/Dockerfile
       args:
         CATEDRALX_BASE_IMAGE: catedralx:v4.2
+        AGENTS_REVISION: ${AGENTS_REVISION:-unknown}
+        AGENTS_CODE_DIRTY: ${AGENTS_CODE_DIRTY:-unknown}
+        CATEDRALX_REVISION: ${CATEDRALX_REVISION:-unknown}
+        CATEDRALX_CODE_DIRTY: ${CATEDRALX_CODE_DIRTY:-unknown}
     container_name: agents-api
     ports:
       - "127.0.0.1:8766:8766"
@@ -16,6 +20,7 @@ services:
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
+      CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST: "10.0.0.4,mock-webhook"
       PYTHONPATH: /app
       CHALAMANDRA_API_MAX_CONCURRENCY: "64"
     healthcheck:
@@ -28,7 +33,7 @@ services:
     networks: [agents_net]
 
   worker:
-    image: agents-worker:candidate-v4.2
+    image: agents-worker:worker-update-20261107
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
@@ -36,7 +41,7 @@ services:
         AGENTS_BASE_IMAGE: agents-api:candidate-v4.2
     container_name: agents-worker
     env_file:
-      - config/.env
+      - config/worker.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
       PYTHONPATH: /app
@@ -45,6 +50,7 @@ services:
       CHALAMANDRA_WORKER_POLL_INTERVAL: "0.2"
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
+      - /home/azureuser/.local/state/chalamandra/catedralx:/home/chalamandra/.local/state/chalamandra/catedralx
     depends_on:
       api:
         condition: service_healthy

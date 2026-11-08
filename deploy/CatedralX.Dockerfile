@@ -1,4 +1,10 @@
+ARG CATEDRALX_REVISION=unknown
+ARG CATEDRALX_CODE_DIRTY=unknown
 FROM python:3.12-slim
+ARG CATEDRALX_REVISION
+ARG CATEDRALX_CODE_DIRTY
+LABEL com.chalamandra.catedralx.revision=$CATEDRALX_REVISION \
+      com.chalamandra.catedralx.code.dirty=$CATEDRALX_CODE_DIRTY
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     CATEDRALX_SNAPSHOT_PATH=/dev/shm/cathedral_snapshot.json \
     PATH="/app/BIN:${PATH}"

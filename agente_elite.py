@@ -24,8 +24,10 @@ TIMEOUT_SECONDS = 180
 MAX_TURNS = 4
 
 REPOS_ROOT = Path(
-    "/home/azureuser/workspace/repos"
-).resolve(strict=True)
+    os.getenv("CHALAMANDRA_REPOS_ROOT")
+    or os.getenv("CHALAMANDRA_REPOS_DIR")
+    or Path(__file__).resolve().parent.parent
+).expanduser().resolve()
 
 
 class EmptyArgs(BaseModel):
@@ -97,7 +99,7 @@ TOOLS_MANIFEST = [
         "type": "function",
         "function": {
             "name": "list_repos",
-            "description": "Lista hasta diez elementos de /home/azureuser/workspace/repos. No acepta otras rutas.",
+            "description": "Lista hasta diez elementos del directorio de repositorios configurado. No acepta otras rutas.",
             "parameters": ListReposArgs.model_json_schema(),
         },
     },
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     agent = EliteAgentCore()
     result = agent.run(
         "Consulta el espacio disponible en la raíz y lista "
-        "los primeros diez elementos de /home/azureuser/workspace/repos. "
+        "los primeros diez elementos del directorio de repositorios configurado. "
         "Resume únicamente los resultados observados."
     )
     print("\n=== RESULTADO ELITE ===")

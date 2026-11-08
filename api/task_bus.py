@@ -88,7 +88,8 @@ def init_db():
                     status TEXT NOT NULL DEFAULT 'pending'
                         CHECK(status IN ('pending', 'published')),
                     created_at TEXT NOT NULL,
-                    published_at TEXT
+                    published_at TEXT,
+                    last_error TEXT
                 )
             """)
             conn.execute("""
@@ -118,6 +119,16 @@ def init_db():
             for column, statement in migrations.items():
                 if column not in columns:
                     conn.execute(statement)
+
+            publication_columns = {
+                row[1] for row in conn.execute(
+                    "PRAGMA table_info(candidate_publications)"
+                ).fetchall()
+            }
+            if "last_error" not in publication_columns:
+                conn.execute(
+                    "ALTER TABLE candidate_publications ADD COLUMN last_error TEXT"
+                )
 
             # Partial indexes make queue and lease scans proportional to active work.
             conn.execute(
@@ -420,7 +431,7 @@ def get_pending_candidate_publications(limit: int = 100) -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute(
             "SELECT task_id, candidate_id, candidate_result FROM candidate_publications "
-            "WHERE status='pending' ORDER BY created_at, task_id LIMIT ?",
+            "WHERE status='pending' AND last_error IS NULL ORDER BY created_at, task_id LIMIT ?",
             (limit,),
         ).fetchall()
 
@@ -438,6 +449,59 @@ def get_pending_candidate_publications(limit: int = 100) -> list[dict]:
             "candidate_result": candidate,
         })
     return publications
+
+
+def mark_candidate_publication_blocked(
+    task_id: str, candidate_id: str, reason: str
+) -> bool:
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    if not isinstance(candidate_id, str) or not candidate_id.strip():
+        raise ValueError("candidate_id is required")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("reason is required")
+
+    init_db()
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE candidate_publications SET last_error=? "
+            "WHERE task_id=? AND candidate_id=? AND status='pending'",
+            (reason[:1000], task_id, candidate_id),
+        )
+        return cursor.rowcount == 1
+
+
+def get_blocked_candidate_publications(limit: int = 100) -> list[dict]:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    init_db()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT task_id, candidate_id, candidate_result, last_error "
+            "FROM candidate_publications WHERE status='pending' AND last_error IS NOT NULL "
+            "ORDER BY created_at, task_id LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+
+def retry_blocked_candidate_publication(task_id: str, candidate_id: str) -> bool:
+    """Clear quarantine after an operator has resolved the underlying conflict."""
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id is required")
+    if not isinstance(candidate_id, str) or not candidate_id.strip():
+        raise ValueError("candidate_id is required")
+
+    init_db()
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE candidate_publications SET last_error=NULL "
+            "WHERE task_id=? AND candidate_id=? AND status='pending' "
+            "AND last_error IS NOT NULL",
+            (task_id, candidate_id),
+        )
+        return cursor.rowcount == 1
 
 
 def mark_candidate_publication_published(task_id: str, candidate_id: str) -> bool:

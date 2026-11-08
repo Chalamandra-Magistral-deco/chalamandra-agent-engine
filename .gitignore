@@ -26,3 +26,9 @@ config/.env
 # Auditoría: Ignorar artefactos de respaldo
 *.bak*
 *.pre-*
+
+# AG-02b: nunca commitear copias de env
+*.env.save
+*.env.save.*
+config/*.save
+config/*.save.*

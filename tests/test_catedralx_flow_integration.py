@@ -70,6 +70,21 @@ def _sign_decision(decision: dict) -> str:
     return json.loads(result.stdout)["signature"]
 
 
+def _inject_test_approver_identity_verifier(monkeypatch) -> None:
+    sys.path.insert(0, str(CATEDRALX_ROOT / "elite"))
+    from AEX.DECISION import ordenes
+
+    monkeypatch.setattr(
+        ordenes,
+        "APPROVER_IDENTITY_VERIFIER",
+        lambda assertion, context, amount: {
+            "verified": isinstance(assertion, dict) and assertion.get("signed") == "test-only-assertion",
+            "subject": assertion.get("subject") if isinstance(assertion, dict) else None,
+            "permissions": ["economic_cycle_authorize"],
+        },
+    )
+
+
 def _request(port: int, path: str, token: str) -> tuple[int, dict]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     connection.request("GET", path, headers={"Authorization": f"Bearer {token}"})
@@ -84,6 +99,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
     monkeypatch, tmp_path
 ):
     sys.path.insert(0, str(CATEDRALX_ROOT / "elite"))
+    _inject_test_approver_identity_verifier(monkeypatch)
     from FEX.GOVERNANCE.economic_cycle import registrar_evento
 
     dispatch_spec = importlib.util.spec_from_file_location(
@@ -140,6 +156,9 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
             "proposal": "Analyze demand evidence for a product page",
             "expected_outcome": "Create a reviewable, source-backed improvement candidate",
             "verification_plan": "Compare qualified lead counts before and after separately approved changes",
+            "source": "synthetic_test_fixture",
+            "method": "fixture_based_scenario",
+            "evidence_ref": "test-fixture://catedralx-flow-integration/product-page",
         },
         path=ledger,
         cycle_id=cycle_id,
@@ -150,6 +169,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
             "approved": True,
             "approver": "integration-test-owner",
             "rationale": "Test only; no external effects allowed",
+            "identity_assertion": {"signed": "test-only-assertion", "subject": "integration-test-owner"},
         },
         path=ledger,
         cycle_id=cycle_id,
@@ -254,6 +274,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
     from api import acceptance_store, candidate_store, subscription_store, task_bus
 
     sys.path.insert(0, str(CATEDRALX_ROOT / "elite"))
+    _inject_test_approver_identity_verifier(monkeypatch)
     from FEX.GOVERNANCE.economic_cycle import registrar_evento
 
     secret = "deterministic-business-flow-test-jwt-secret-2026"
@@ -310,6 +331,9 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
             "proposal": "Analyze demand evidence for a product page",
             "expected_outcome": "Create a traceable candidate for independent review",
             "verification_plan": "Compare qualified lead counts across approved periods",
+            "source": "synthetic_test_fixture",
+            "method": "fixture_based_scenario",
+            "evidence_ref": "test-fixture://catedralx-flow-integration/approved-cycle",
         },
         path=ledger, cycle_id=cycle_id,
     )
@@ -319,6 +343,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
             "approved": True,
             "approver": "isolated-test-owner",
             "rationale": "Authorize analysis only; no external actions",
+            "identity_assertion": {"signed": "test-only-assertion", "subject": "isolated-test-owner"},
         },
         path=ledger, cycle_id=cycle_id,
     )
