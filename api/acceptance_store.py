@@ -100,6 +100,18 @@ def _validate_decision_shape(decision: dict[str, Any]) -> None:
         raise ValueError("decided_at debe incluir zona horaria")
 
 
+def _validate_candidate_trace(candidate: dict[str, Any], decision_trace_id: str) -> None:
+    candidate_trace_id = candidate.get("trace_id")
+    if (
+        not isinstance(candidate_trace_id, str)
+        or not _TRACE_ID_RE.fullmatch(candidate_trace_id)
+        or candidate_trace_id == "0" * 32
+    ):
+        raise ValueError("El candidato no contiene un trace_id W3C válido")
+    if decision_trace_id != candidate_trace_id:
+        raise ValueError("El trace_id de la decisión no coincide con el del candidato")
+
+
 def _verify_persisted_record(record: dict[str, Any], candidate_id: str) -> dict[str, Any]:
     _validate_decision_shape(record)
     if record.get("candidate_id") != candidate_id:
@@ -114,6 +126,7 @@ def _verify_persisted_record(record: dict[str, Any], candidate_id: str) -> dict[
     candidate = candidate_store.get_candidate(candidate_id)
     if not candidate:
         raise ValueError("Candidato no encontrado para verificar la aceptación persistida")
+    _validate_candidate_trace(candidate, record["trace_id"])
     if record.get("evidence_digest") != candidate_store.compute_evidence_digest(candidate):
         raise ValueError("El evidence_digest persistido ya no coincide con la evidencia del candidato")
     return record
@@ -139,6 +152,7 @@ def record_acceptance(decision: dict[str, Any]) -> str:
     candidate = candidate_store.get_candidate(candidate_id)
     if not candidate:
         raise ValueError("Candidato no encontrado para verificar la evidencia")
+    _validate_candidate_trace(candidate, decision["trace_id"])
     if decision["outcome"] == "accepted" and candidate.get("status") != "candidate":
         raise ValueError(
             "Solo un candidato ejecutado y elegible puede recibir aceptación; "

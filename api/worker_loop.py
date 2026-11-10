@@ -1,5 +1,6 @@
 """Worker Loop real: procesa tareas del TaskBus (Fase 2)."""
 import asyncio
+import inspect
 import os
 import signal
 import threading
@@ -12,7 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from api import task_bus
 from api import candidate_store
+from api.task_contracts import (
+    CATEDRALX_ECONOMIC_EVALUATION,
+    CATEDRALX_ECONOMIC_PROPOSAL_REVIEW,
+    validate_task_contract,
+)
 from core.master import Master
+from telemetry.resources import record_task_resources
 from api.heartbeat import write_worker_heartbeat
 
 
@@ -107,6 +114,10 @@ def _run_catedralx(payload: dict) -> dict:
                     "reason": f"{source_key}_must_be_object",
                 }
             snapshot[snapshot_key] = value
+    from api.task_contracts import _verify_market_source_attestation
+    source_error = _verify_market_source_attestation(payload)
+    if source_error:
+        return {"status": "BLOCKED", "reason": source_error}
     fd, temp_path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
@@ -207,6 +218,103 @@ def _run_catedralx(payload: dict) -> dict:
             os.remove(temp_path)
 
 
+def _verify_business_approver_identity(payload: dict, authorization: dict, measurement: dict, proposal: dict) -> dict:
+    """Re-verify the original signed approver assertion and its consumed nonce."""
+    import sys
+
+    assertion = authorization.get("identity_assertion")
+    identity_context = authorization.get("identity_context")
+    if not isinstance(assertion, (dict, str)) or not assertion:
+        raise ValueError("human_identity_assertion_missing")
+    if not isinstance(identity_context, dict):
+        raise ValueError("human_identity_context_missing")
+    if (
+        identity_context.get("purpose") != "catedralx_economic_cycle_authorization"
+        or identity_context.get("cycle_id") != payload.get("cycle_id")
+        or identity_context.get("proposal") != proposal
+        or identity_context.get("measurement") != measurement
+        or not isinstance(identity_context.get("cycle_digest"), str)
+        or len(identity_context["cycle_digest"]) != 64
+    ):
+        raise ValueError("human_identity_context_mismatch")
+
+    import re
+
+    catedralx_root = _catedral_repo().resolve()
+    elite_path = (catedralx_root / "elite").resolve()
+    expected_cycle_module = (
+        elite_path / "FEX" / "GOVERNANCE" / "economic_cycle.py"
+    ).resolve()
+    expected_ordenes_module = (
+        elite_path / "AEX" / "DECISION" / "ordenes.py"
+    ).resolve()
+    if not expected_cycle_module.is_file() or not expected_ordenes_module.is_file():
+        raise ValueError("canonical_catedralx_identity_verifier_missing")
+    elite_root = str(elite_path)
+    if elite_root not in sys.path:
+        sys.path.insert(0, elite_root)
+
+    # Do not silently reuse AEX/FEX modules imported from another checkout.
+    for package_name, expected_dir in (
+        ("AEX", (elite_path / "AEX").resolve()),
+        ("FEX", (elite_path / "FEX").resolve()),
+    ):
+        existing_package = sys.modules.get(package_name)
+        if existing_package is not None:
+            existing_paths = {
+                Path(value).resolve()
+                for value in getattr(existing_package, "__path__", [])
+            }
+            if existing_paths and expected_dir not in existing_paths:
+                raise ValueError("catedralx_identity_module_path_mismatch")
+
+    from AEX.DECISION import ordenes
+    from FEX.GOVERNANCE import economic_cycle
+    if Path(ordenes.__file__).resolve() != expected_ordenes_module:
+        raise ValueError("catedralx_identity_verifier_path_mismatch")
+    if Path(economic_cycle.__file__).resolve() != expected_cycle_module:
+        raise ValueError("catedralx_identity_cycle_module_path_mismatch")
+    _verify_cycle_identity = economic_cycle._verify_cycle_identity
+
+    if not re.fullmatch(r"[0-9a-f]{64}", identity_context["cycle_digest"]):
+        raise ValueError("human_identity_cycle_digest_invalid")
+    if identity_context.get("verify_at") is None:
+        raise ValueError("human_identity_verification_time_missing")
+
+    verifier = ordenes.APPROVER_IDENTITY_VERIFIER
+    if not callable(verifier):
+        raise ValueError("human_identity_verifier_unavailable")
+    try:
+        verified = _verify_cycle_identity(
+            verifier,
+            assertion,
+            identity_context,
+            float(measurement["value"]),
+            consume_nonce=False,
+        )
+    except Exception as exc:
+        raise ValueError("human_identity_signature_or_nonce_invalid") from exc
+    if not isinstance(verified, dict) or verified.get("verified") is not True:
+        raise ValueError("human_identity_not_verified")
+    subject = verified.get("subject")
+    permissions = verified.get("permissions")
+    if not isinstance(subject, str) or subject.strip() != authorization.get("approver"):
+        raise ValueError("human_approver_subject_mismatch")
+    if not isinstance(permissions, (list, tuple, set)) or "economic_cycle_authorize" not in permissions:
+        raise ValueError("human_identity_permission_missing")
+    return {
+        "subject": subject.strip(),
+        "permissions": sorted(permissions),
+        "identity_proof_digest": __import__("hashlib").sha256(
+            json.dumps(
+                {"assertion": assertion, "context": identity_context},
+                ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
 def _validate_authorized_business_proposal(payload: dict) -> dict:
     """Validate a human-authorized economic cycle without invoking any model or tool."""
     import math
@@ -271,6 +379,9 @@ def _validate_authorized_business_proposal(payload: dict) -> dict:
         value = authorization.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"authorization_{field}_missing")
+    identity = _verify_business_approver_identity(
+        payload, authorization, measurement, proposal
+    )
 
     allowed = boundary.get("allowed")
     prohibited = boundary.get("prohibited")
@@ -313,8 +424,12 @@ def _validate_authorized_business_proposal(payload: dict) -> dict:
         },
         "authorization": {
             "approved": True,
-            "approver": authorization["approver"].strip(),
+            "approver": identity["subject"],
             "rationale": authorization["rationale"].strip(),
+            "identity_verified": True,
+            "identity_permissions": identity["permissions"],
+            "identity_verification": "APPROVER_IDENTITY_VERIFIER",
+            "identity_proof_digest": identity["identity_proof_digest"],
         },
         "execution_boundary": {
             "allowed": sorted(set(allowed)),
@@ -324,6 +439,7 @@ def _validate_authorized_business_proposal(payload: dict) -> dict:
     }
 
 
+@record_task_resources
 def process_task(task: dict) -> dict:
     task_id = task["task_id"]
     payload = {}
@@ -343,8 +459,11 @@ def process_task(task: dict) -> dict:
     business_proposal_context: dict | None = None
 
     try:
-        # Detectar si es una tarea financiera
-        if "financial" in objective.lower() or "historical_prices" in payload:
+        contract_error = validate_task_contract(objective, payload)
+        if contract_error:
+            summary = f"Contrato de tarea bloqueado: {contract_error}"
+            status = "blocked"
+        elif objective.strip() == CATEDRALX_ECONOMIC_EVALUATION:
             engine_payload = dict(payload)
             engine_payload.setdefault("trace_id", task.get("trace_id"))
             result = _run_catedralx(engine_payload)
@@ -391,8 +510,7 @@ def process_task(task: dict) -> dict:
             }
             if (
                 not is_magis_task
-                and not model_calls_enabled
-                and objective.strip() == "catedralx_economic_proposal_review"
+                and objective.strip() == CATEDRALX_ECONOMIC_PROPOSAL_REVIEW
             ):
                 # This restricted economic path is deterministic and requires no model call.
                 # It validates a pre-authorized proposal and emits only a reviewable candidate.
@@ -486,9 +604,19 @@ def process_task(task: dict) -> dict:
                         + json.dumps(task_context, ensure_ascii=False, sort_keys=True, allow_nan=False)
                     )
                     master = Master()
-                    result = asyncio.run(
-                        master.execute_task(execution_prompt, allowed_tools=required_tools)
-                    )
+                    execute_kwargs = {"allowed_tools": required_tools}
+                    # Preserve compatibility with injected test doubles and older Master adapters.
+                    try:
+                        parameters = inspect.signature(master.execute_task).parameters
+                        accepts_trace = "trace_id" in parameters or any(
+                            item.kind == inspect.Parameter.VAR_KEYWORD
+                            for item in parameters.values()
+                        )
+                    except (TypeError, ValueError):
+                        accepts_trace = False
+                    if accepts_trace and task.get("trace_id") is not None:
+                        execute_kwargs["trace_id"] = task["trace_id"]
+                    result = asyncio.run(master.execute_task(execution_prompt, **execute_kwargs))
                     summary = (
                         result.get("summary", "Ejecución completada")
                         if isinstance(result, dict)
@@ -521,7 +649,12 @@ def process_task(task: dict) -> dict:
         "assumptions": [],
         "contradictions": [],
         "trace_id": task.get("trace_id"),
-        "catedralx_trace_id": catedralx_trace_id or None,
+        "catedralx_trace_id": (
+            catedralx_trace_id
+            or (business_proposal_context.get("trace_id") if business_proposal_context else None)
+            or (task.get("trace_id") if business_proposal_context else None)
+            or None
+        ),
         "decision_result": canonical_decision_result,
         "business_cycle_id": (
             business_proposal_context.get("cycle_id")

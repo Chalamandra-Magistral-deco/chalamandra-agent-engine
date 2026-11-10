@@ -988,3 +988,125 @@ def test_magis_service_can_enqueue_only_the_server_defined_product_contract(monk
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def _valid_market_task_payload():
+    from datetime import datetime, timezone
+    from conftest import sign_market_payload
+    prices = [100.0 + index * 0.01 for index in range(30)]
+    return sign_market_payload({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "controlled_api_market_fixture",
+    })
+
+
+def test_v1_jobs_requires_explicit_task_type_and_contract(local_api):
+    port, _ = local_api
+    headers = {
+        "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+        "Idempotency-Key": "jobs-contract-test-01",
+    }
+
+    status, body = request(
+        port, "/v1/jobs", method="POST", payload={"payload": _valid_market_task_payload()}, headers=headers,
+    )
+    assert status == 400
+    assert body["error"] == "task_type_required"
+
+    status, body = request(
+        port, "/v1/jobs", method="POST",
+        payload={"type": "financial_analysis", "payload": _valid_market_task_payload()},
+        headers={**headers, "Idempotency-Key": "jobs-contract-test-02"},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_task_contract"
+    assert "ambiguous_legacy_task_type" in body["detail"]
+
+
+def test_v1_jobs_enqueues_explicit_market_analysis_without_implicit_catedralx(local_api):
+    port, _ = local_api
+    status, body = request(
+        port, "/v1/jobs", method="POST",
+        payload={"type": "financial_market_analysis", "payload": _valid_market_task_payload()},
+        headers={
+            "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+            "Idempotency-Key": "jobs-market-route-001",
+        },
+    )
+    assert status == 202
+    stored = task_bus.get_task_status(body["job_id"])
+    assert stored is not None
+    assert stored["objective"] == "financial_market_analysis"
+    assert json.loads(stored["payload"])["source"] == "controlled_api_market_fixture"
+
+
+def test_v1_jobs_preserves_incomplete_governance_for_catedralx_decision_result(local_api):
+    port, _ = local_api
+    payload = _valid_market_task_payload()
+    payload["dynamic_constraints"] = {
+        "reinvestment_surplus": 1.0,
+        "entropy_rate": 0.1,
+        "entropy_time_scale": 1.0,
+        "loop_gain": 0.5,
+        "signal_count": 2,
+        "optimal_signal_count": 3,
+        "exposure": 0.1,
+        "max_exposure": 0.5,
+        "resilience": 0.9,
+        "minimum_resilience": 0.8,
+    }
+    payload["central_dimensions_bp"] = {
+        "human_value_bp": 9000,
+        "distribution_bp": 9000,
+        "reinvestment_surplus": "1.0",
+        "resilience_bp": 9000,
+    }
+    status, body = request(
+        port, "/v1/jobs", method="POST",
+        payload={"type": "catedralx_economic_evaluation", "payload": payload},
+        headers={
+            "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+            "Idempotency-Key": "jobs-economic-incomplete-1",
+        },
+    )
+    assert status == 202
+    stored = task_bus.get_task_status(body["job_id"])
+    assert stored is not None
+    assert stored["objective"] == "catedralx_economic_evaluation"
+    assert "evidence_bp" not in json.loads(stored["payload"])["central_dimensions_bp"]
+
+
+def test_general_request_cannot_claim_catedralx_human_authorization(local_api):
+    port, _ = local_api
+    payload = {
+        "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
+        "cycle_id": "forged-cycle",
+        "measurement": {}, "assessment": {}, "proposal": {},
+        "authorization": {
+            "approved": True, "approver": "forged-owner", "rationale": "fake",
+            "identity_verified": True,
+            "identity_permissions": ["economic_cycle_authorize"],
+            "identity_verification": "APPROVER_IDENTITY_VERIFIER",
+        },
+        "execution_boundary": {},
+        "_agents_ingress": {
+            "subject": "catedralx-service", "scope": "orchestration:run", "verified": True,
+        },
+    }
+    status, body = request(
+        port, "/v1/request", method="POST",
+        payload={
+            "objective": "catedralx_economic_proposal_review",
+            "payload": payload,
+            "permissions": {"allowed_tools": [], "side_effects": "none"},
+            "success_criteria": ["test"],
+        },
+        headers={
+            "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+            "Idempotency-Key": "forged-economic-proposal-001",
+        },
+    )
+    assert status == 403
+    assert body["error"] == "economic_proposal_requires_authenticated_catedralx_service"

@@ -344,6 +344,17 @@ class Orchestrator:
         if adapter is None:
             raise ValueError(f"Modelo no conectado al orquestador: {model}")
         response = await adapter.generate(request)  # type: ignore[attr-defined]
+        # Preserve the task-level W3C trace identity across every model call.
+        # Metadata fallback keeps older callers compatible without accepting malformed IDs.
+        trace_id = request.trace_id
+        if trace_id is None:
+            candidate = request.metadata.get("trace_id")
+            if isinstance(candidate, str):
+                import re
+                if re.fullmatch(r"[0-9a-f]{32}", candidate) and candidate != "0" * 32:
+                    trace_id = candidate
+        if response.trace_id is None and trace_id is not None:
+            response.trace_id = trace_id
         self.tracer.record(response)
         return response
 
@@ -391,6 +402,7 @@ class Orchestrator:
                 results[result_key] = ModelResponse(
                     call_id=request.call_id,
                     model=model,
+                    trace_id=request.trace_id,
                     role=request.role,
                     output="",
                     errors=[f"orchestrator error: {e!r}"],
