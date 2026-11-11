@@ -32,7 +32,7 @@ services:
     networks: [agents_net]
 
   worker:
-    image: ${AGENTS_WORKER_IMAGE:-agents-worker:worker-update-20261107}
+    image: ${AGENTS_WORKER_IMAGE:-agents-worker:candidate-v4.2}
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
