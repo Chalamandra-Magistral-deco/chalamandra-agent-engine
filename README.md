@@ -125,7 +125,7 @@ for path in ("/healthz", "/v1/inspect", "/v1/agents", "/v1/tools"):
 PY
 ```
 
-Para instalar el servicio de usuario en esta VM:
+Para instalar el servicio de usuario en un host Linux administrado por el operador (opcional):
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -136,6 +136,29 @@ systemctl --user status chalamandra-agents-api.service
 ```
 
 Los POST siempre requieren `Authorization: Bearer $CHALAMANDRA_API_TOKEN`. La API limita el tamaño del cuerpo a 64 KiB, no acepta campos extra en los contratos y no expone shell ni CORS. Sin token, el modo local solo ofrece GET de lectura. Las llamadas a modelos están desactivadas por defecto; el acceso remoto mediante HTTP directo está bloqueado. Para integrar otro sistema, usa un túnel privado autenticado o proxy TLS tras una revisión de permisos.
+
+### Docker Compose portable
+
+El despliegue Compose no depende de rutas absolutas de una VM ni de volúmenes externos precreados. Compose administra dos volúmenes nombrados persistentes: `agents_agents_runtime_state` y `agents_catedralx_runtime_state`. El allowlist de webhooks privados no tiene IPs ni hosts de ejemplo activados por defecto.
+
+Prepara los archivos locales de configuración (no se versionan):
+
+```bash
+cp config/.env.example config/.env
+cp config/.env.example config/worker.env
+```
+
+Configura las claves públicas de verificación en ambos entornos y los secretos de API únicamente donde corresponda. Antes de iniciar Compose, selecciona imágenes que ya hayan sido construidas y verificadas:
+
+```bash
+export CATEDRALX_BASE_IMAGE=catedralx:<tag-validado>
+export AGENTS_API_IMAGE=agents-api:<tag-validado>
+export AGENTS_WORKER_IMAGE=agents-worker:<tag-validado>
+docker compose config --quiet
+docker compose up -d
+```
+
+No uses etiquetas históricas como prueba de procedencia: registra los SHA de Agents y CatedralX de las imágenes elegidas y verifica sus etiquetas OCI antes de habilitar el servicio.
 
 ## Verificación
 
@@ -168,7 +191,7 @@ Las pruebas predeterminadas no llaman a proveedores de nube ni generan gasto por
 
 ## Límites operativos
 
-- `Master` se consume desde Python y tiene una API HTTP local de loopback; la unidad `systemd --user` está versionada en `deploy/systemd/`. La persistencia de ese servicio tras cerrar sesión depende de la configuración de linger del usuario en la VM.
+- `Master` se consume desde Python y tiene una API HTTP local de loopback; la unidad `systemd --user` está versionada en `deploy/systemd/`. La persistencia de ese servicio tras cerrar sesión depende de la configuración de linger del usuario en el host Linux.
 - Una habilidad solo se marca como verificada cuando existe evidencia local de prueba; las capacidades declaradas por un proveedor no elevan por sí solas el estado.
 - La herramienta `search_term_miner` nunca escribe en Google Ads. Solo lee el CSV contenido en el directorio permitido y devuelve recomendaciones candidatas.
 - Los límites de paso y los valores no finitos de la simulación se validan antes de calcular para reducir el riesgo de asignaciones excesivas o trayectorias inválidas.
