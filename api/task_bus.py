@@ -543,6 +543,21 @@ def mark_result_accepted(result_id: str) -> int:
         return int(cursor.rowcount)
 
 
+def mark_result_rejected(result_id: str) -> int:
+    """Close every non-accepted task linked to an independently rejected result."""
+    if not isinstance(result_id, str) or not result_id.strip():
+        raise ValueError("result_id is required")
+    init_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE tasks SET status = 'rejected', updated_at = ? "
+            "WHERE result_id = ? AND status IN ('candidate', 'blocked', 'failed')",
+            (now, result_id),
+        )
+        return int(cursor.rowcount)
+
+
 def get_result_task_statuses(result_id: str) -> list[dict]:
     """Return every task linked to a result for acceptance reconciliation."""
     if not isinstance(result_id, str) or not result_id.strip():
