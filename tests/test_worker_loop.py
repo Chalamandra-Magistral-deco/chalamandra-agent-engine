@@ -284,12 +284,12 @@ def test_catedralx_blocks_missing_or_invalid_trace_before_subprocess(
         raise AssertionError("CatedralX must not run without a valid W3C trace ID")
 
     monkeypatch.setattr(subprocess, "run", should_not_run)
-    payload = {
+    payload = sign_market_payload({
         "historical_prices": [100.0 + index for index in range(30)],
         "current_price": 129.0,
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "source": "test_verified_feed",
-    }
+    })
     if trace_id is not None:
         payload["trace_id"] = trace_id
     result = worker_loop._run_catedralx(payload)
