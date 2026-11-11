@@ -152,7 +152,7 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
                 "assumptions": [],
                 "risks": [],
                 "provenance": [],
-                "trace_id": "trace-canonical",
+                "trace_id": "1234567890abcdef1234567890abcdef",
                 "analysis_only": True,
                 "orders_created": False,
                 "orders_executed": False,
@@ -210,11 +210,11 @@ def test_catedralx_snapshot_transports_governance_inputs_without_rewriting(monke
 
     captured = {}
     dimensions = {
+        "viability_bp": 7800,
         "human_value_bp": 8100,
         "distribution_bp": 7600,
         "resilience_bp": 9000,
         "evidence_bp": 9200,
-        "reinvestment_surplus": "125.50",
     }
     constraints = {
         "reinvestment_surplus": 125.5,
@@ -244,6 +244,7 @@ def test_catedralx_snapshot_transports_governance_inputs_without_rewriting(monke
         "source": "test_verified_feed",
     })
     market_payload.update({
+        "trace_id": "1234567890abcdef1234567890abcdef",
         "central_dimensions_bp": dimensions,
         "dynamic_constraints": constraints,
     })
@@ -269,6 +270,64 @@ def test_catedralx_blocks_non_object_governance_inputs(monkeypatch):
     assert result == {
         "status": "BLOCKED",
         "reason": "central_dimensions_bp_must_be_object",
+    }
+
+
+@pytest.mark.parametrize("trace_id", [None, "", "not-a-trace", "0" * 32, "A" * 32])
+def test_catedralx_blocks_missing_or_invalid_trace_before_subprocess(
+    trace_id, monkeypatch
+):
+    import subprocess
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("CatedralX must not run without a valid W3C trace ID")
+
+    monkeypatch.setattr(subprocess, "run", should_not_run)
+    payload = {
+        "historical_prices": [100.0 + index for index in range(30)],
+        "current_price": 129.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+    }
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
+    result = worker_loop._run_catedralx(payload)
+    assert result == {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
+
+
+def test_catedralx_blocks_decision_result_with_mismatched_trace(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        output = {
+            "decision_result": {
+                "result_id": "trace-mismatch",
+                "status": "ACCEPTED",
+                "engine": "CatedralX",
+                "decision": "hold",
+                "evaluation_hash": "a" * 64,
+                "evaluation_gate": "ACCEPTED",
+                "evidence": [], "assumptions": [], "risks": [], "provenance": [],
+                "trace_id": "fedcfedcfedcfedcfedcfedcfedcfedc",
+                "analysis_only": True, "orders_created": False, "orders_executed": False,
+            }
+        }
+        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    payload = sign_market_payload({
+        "historical_prices": [100.0 + index for index in range(30)],
+        "current_price": 129.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+    })
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+    assert result == {
+        "status": "BLOCKED",
+        "reason": "decision_result_contract_invalid_or_trace_mismatch",
     }
 
 
