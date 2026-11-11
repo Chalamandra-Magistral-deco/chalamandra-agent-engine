@@ -24,7 +24,7 @@ CATEDRALX_ECONOMIC_EVALUATION = "catedralx_economic_evaluation"
 CATEDRALX_ECONOMIC_PROPOSAL_REVIEW = "catedralx_economic_proposal_review"
 
 _MARKET_REQUIRED = {"historical_prices", "current_price", "observed_at", "source"}
-_DYNAMIC_REQUIRED = {
+_DYNAMIC_ALLOWED = {
     "reinvestment_surplus", "entropy_rate", "entropy_time_scale", "loop_gain",
     "signal_count", "optimal_signal_count", "exposure", "max_exposure",
     "resilience", "minimum_resilience",
@@ -33,7 +33,7 @@ _CENTRAL_ALLOWED = {
     "viability_bp", "human_value_bp", "distribution_bp",
     "resilience_bp", "evidence_bp",
 }
-_NUMERIC_DYNAMIC = _DYNAMIC_REQUIRED - {"signal_count", "optimal_signal_count"}
+_NUMERIC_DYNAMIC = _DYNAMIC_ALLOWED - {"signal_count", "optimal_signal_count"}
 
 
 def _finite_positive(value: Any) -> bool:
