@@ -178,6 +178,7 @@ class Executor:
         context: dict[str, SubtaskResult],
         *,
         allowed_tools_override: set[str] | None = None,
+        trace_id: str | None = None,
     ) -> SubtaskResult:
         """
         Ejecuta una subtarea, mediando selección de modelo, permisos y validación.
@@ -256,6 +257,7 @@ class Executor:
             timeout_seconds=120.0,
             role=ModelRole.AGENT,
             skills=[Skill(subtask.skill)],
+            trace_id=trace_id,
             metadata={
                 "agent": profile.name,
                 "allowed_tools": allowed_tools,
@@ -381,6 +383,7 @@ class Executor:
         subtasks: list[Subtask],
         *,
         allowed_tools: list[str] | None = None,
+        trace_id: str | None = None,
     ) -> ExecutionSummary:
         """
         Ejecuta un plan por niveles y agrega los resultados parciales.
@@ -428,6 +431,7 @@ class Executor:
                     st,
                     summary.subtask_results,
                     allowed_tools_override=allowed_tool_set,
+                    trace_id=trace_id,
                 )
                 for st in level
             ]

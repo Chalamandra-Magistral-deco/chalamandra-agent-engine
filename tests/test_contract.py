@@ -203,17 +203,18 @@ def test_orchestration_run_preserves_payload_and_reports_terminal_candidate(loca
     from api import task_bus
 
     port = local_api
-    payload = {
+    from conftest import sign_market_payload
+    payload = sign_market_payload({
         "historical_prices": [100.0 + index * 0.01 for index in range(30)],
         "current_price": 100.29,
         "observed_at": "2026-10-27T20:00:00+00:00",
         "source": "test_fixture",
-    }
+    })
     status, created = request(
         port,
         "/internal/v1/orchestration/runs",
         method="POST",
-        payload={"objective": "financial_analysis", "payload": payload, "permissions": {"allowed_tools": [], "side_effects": "none"}},
+        payload={"objective": "financial_market_analysis", "payload": payload, "permissions": {"allowed_tools": [], "side_effects": "none"}},
         headers={"Authorization": f"Bearer {make_jwt('orchestration:run', subject='catedralx-service')}"},
     )
     assert status == 202
@@ -256,7 +257,22 @@ def test_orchestration_run_idempotency_preserves_original_run(local_api):
     }
     payload = {
         "objective": "catedralx_economic_proposal_review",
-        "payload": {"cycle_id": "cycle-idem-test", "proposal": "test-only"},
+        "payload": {
+            "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
+            "cycle_id": "cycle-idem-test",
+            "measurement": {},
+            "assessment": {},
+            "proposal": {},
+            "authorization": {
+                "approved": True,
+                "approver": "test-owner",
+                "rationale": "test only",
+                "identity_verified": True,
+                "identity_permissions": ["economic_cycle_authorize"],
+                "identity_verification": "APPROVER_IDENTITY_VERIFIER",
+            },
+            "execution_boundary": {},
+        },
         "permissions": {"allowed_tools": [], "side_effects": "none"},
         "success_criteria": ["Create a traceable candidate"],
     }
@@ -277,10 +293,9 @@ def test_orchestration_run_idempotency_preserves_original_run(local_api):
     assert replay["idempotent_replay"] is True
     assert len(task_bus.get_tasks_by_run(first["run_id"])) == 1
 
-    changed = {
-        **payload,
-        "payload": {"cycle_id": "cycle-idem-test", "proposal": "changed"},
-    }
+    changed_payload = dict(payload["payload"])
+    changed_payload["cycle_id"] = "cycle-idem-test-changed"
+    changed = {**payload, "payload": changed_payload}
     status_conflict, conflict = request(
         port, "/internal/v1/orchestration/runs",
         method="POST", payload=changed, headers=headers,

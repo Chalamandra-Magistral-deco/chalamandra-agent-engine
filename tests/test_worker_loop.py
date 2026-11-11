@@ -1,10 +1,41 @@
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from api import worker_loop
+from conftest import sign_market_payload
+
+
+def _economic_evaluation_payload():
+    prices = [100.0 + index * 0.01 for index in range(30)]
+    return sign_market_payload({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "synthetic_verified_test_feed",
+        "dynamic_constraints": {
+            "reinvestment_surplus": 1.0,
+            "entropy_rate": 0.1,
+            "entropy_time_scale": 1.0,
+            "loop_gain": 0.5,
+            "signal_count": 2,
+            "optimal_signal_count": 3,
+            "exposure": 0.1,
+            "max_exposure": 0.5,
+            "resilience": 0.9,
+            "minimum_resilience": 0.8,
+        },
+        "central_dimensions_bp": {
+            "viability_bp": 9000,
+            "human_value_bp": 9000,
+            "distribution_bp": 9000,
+            "resilience_bp": 9000,
+            "evidence_bp": 9000,
+        },
+    })
 
 
 def test_financial_task_preserves_catedralx_result_id(monkeypatch):
@@ -43,11 +74,8 @@ def test_financial_task_preserves_catedralx_result_id(monkeypatch):
 
     task = {
         "task_id": "test-task-123",
-        "objective": "financial_analysis",
-        "payload": json.dumps({
-            "historical_prices": [1.10, 1.11, 1.12],
-            "current_price": 1.13,
-        }),
+        "objective": "catedralx_economic_evaluation",
+        "payload": json.dumps(_economic_evaluation_payload()),
         "trace_id": "trace-test-123",
     }
 
@@ -84,8 +112,8 @@ def test_accepted_without_result_id_is_blocked(monkeypatch):
 
     result = worker_loop.process_task({
         "task_id": "missing-result-id",
-        "objective": "financial_analysis",
-        "payload": '{"historical_prices":[1.1,1.2],"current_price":1.3}',
+        "objective": "catedralx_economic_evaluation",
+        "payload": json.dumps(_economic_evaluation_payload()),
         "trace_id": "trace-missing-id",
     })
 
@@ -125,7 +153,7 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
                 "assumptions": [],
                 "risks": [],
                 "provenance": [],
-                "trace_id": "trace-canonical",
+                "trace_id": "1234567890abcdef1234567890abcdef",
                 "analysis_only": True,
                 "orders_created": False,
                 "orders_executed": False,
@@ -147,13 +175,14 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
 
     prices = [1.10 + index * 0.001 for index in range(30)]
     observed_at = datetime.now(timezone.utc).isoformat()
-    result = worker_loop._run_catedralx({
+    market_payload = sign_market_payload({
         "historical_prices": prices,
         "current_price": prices[-1],
         "observed_at": observed_at,
         "source": "test_verified_feed",
-        "trace_id": "1234567890abcdef1234567890abcdef",
     })
+    market_payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(market_payload)
 
     assert captured["env"]["CATEDRALX_PYTHON"] == sys.executable
     assert captured["env"]["CATEDRALX_TRACE_ID"] == "1234567890abcdef1234567890abcdef"
@@ -182,11 +211,11 @@ def test_catedralx_snapshot_transports_governance_inputs_without_rewriting(monke
 
     captured = {}
     dimensions = {
+        "viability_bp": 7800,
         "human_value_bp": 8100,
         "distribution_bp": 7600,
         "resilience_bp": 9000,
         "evidence_bp": 9200,
-        "reinvestment_surplus": "125.50",
     }
     constraints = {
         "reinvestment_surplus": 125.5,
@@ -209,14 +238,18 @@ def test_catedralx_snapshot_transports_governance_inputs_without_rewriting(monke
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
     monkeypatch.setattr(subprocess, "run", fake_run)
     prices = [100.0 + index for index in range(30)]
-    result = worker_loop._run_catedralx({
+    market_payload = sign_market_payload({
         "historical_prices": prices,
         "current_price": prices[-1],
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "source": "test_verified_feed",
+    })
+    market_payload.update({
+        "trace_id": "1234567890abcdef1234567890abcdef",
         "central_dimensions_bp": dimensions,
         "dynamic_constraints": constraints,
     })
+    result = worker_loop._run_catedralx(market_payload)
     assert result["status"] == "BLOCKED"
     assert captured["CENTRAL_DIMENSIONS_BP"] == dimensions
     assert captured["DYNAMIC_CONSTRAINTS"] == constraints
@@ -238,6 +271,64 @@ def test_catedralx_blocks_non_object_governance_inputs(monkeypatch):
     assert result == {
         "status": "BLOCKED",
         "reason": "central_dimensions_bp_must_be_object",
+    }
+
+
+@pytest.mark.parametrize("trace_id", [None, "", "not-a-trace", "0" * 32, "A" * 32])
+def test_catedralx_blocks_missing_or_invalid_trace_before_subprocess(
+    trace_id, monkeypatch
+):
+    import subprocess
+
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("CatedralX must not run without a valid W3C trace ID")
+
+    monkeypatch.setattr(subprocess, "run", should_not_run)
+    payload = sign_market_payload({
+        "historical_prices": [100.0 + index for index in range(30)],
+        "current_price": 129.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+    })
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
+    result = worker_loop._run_catedralx(payload)
+    assert result == {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
+
+
+def test_catedralx_blocks_decision_result_with_mismatched_trace(monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        output = {
+            "decision_result": {
+                "result_id": "trace-mismatch",
+                "status": "ACCEPTED",
+                "engine": "CatedralX",
+                "decision": "hold",
+                "evaluation_hash": "a" * 64,
+                "evaluation_gate": "ACCEPTED",
+                "evidence": [], "assumptions": [], "risks": [], "provenance": [],
+                "trace_id": "fedcfedcfedcfedcfedcfedcfedcfedc",
+                "analysis_only": True, "orders_created": False, "orders_executed": False,
+            }
+        }
+        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    payload = sign_market_payload({
+        "historical_prices": [100.0 + index for index in range(30)],
+        "current_price": 129.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+    })
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+    assert result == {
+        "status": "BLOCKED",
+        "reason": "decision_result_contract_invalid_or_trace_mismatch",
     }
 
 
@@ -348,13 +439,8 @@ def test_general_task_passes_payload_and_success_criteria_to_master(monkeypatch)
 
     task = {
         "task_id": "economic-proposal-test",
-        "objective": "catedralx_economic_proposal_review",
-        "payload": json.dumps({
-            "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
-            "cycle_id": "cycle-test-99",
-            "proposal": {"proposal": "Analyze product demand"},
-            "execution_boundary": {"prohibited": ["ad_spend", "publications"]},
-        }),
+        "objective": "general_analysis_test",
+        "payload": json.dumps({"topic": "product demand evidence"}),
         "success_criteria": json.dumps(["Produce candidate with sources"]),
         "required_tools": "[]",
         "trace_id": "trace-economic-proposal-test",
@@ -363,10 +449,9 @@ def test_general_task_passes_payload_and_success_criteria_to_master(monkeypatch)
     result = worker_loop.process_task(task)
 
     assert result["status"] == "candidate"
-    assert "cycle-test-99" in captured["objective"]
+    assert "general_analysis_test" in captured["objective"]
     assert "Produce candidate with sources" in captured["objective"]
-    assert "ad_spend" in captured["objective"]
-    assert "No publiques" in captured["objective"]
+    assert "product demand evidence" in captured["objective"]
     assert captured["allowed_tools"] == []
     assert len(saved_candidates) == 1
     assert len(completions) == 1
@@ -412,7 +497,7 @@ def test_worker_blocks_tools_without_verified_effect_classification(monkeypatch)
 
 
 def _approved_business_proposal_payload(cycle_id="cycle-deterministic-test"):
-    return {
+    payload = {
         "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
         "cycle_id": cycle_id,
         "measurement": {
@@ -437,6 +522,29 @@ def _approved_business_proposal_payload(cycle_id="cycle-deterministic-test"):
             "approved": True,
             "approver": "business-owner-test",
             "rationale": "Authorize analysis only; no external actions.",
+            "identity_verified": True,
+            "identity_permissions": ["economic_cycle_authorize"],
+            "identity_verification": "APPROVER_IDENTITY_VERIFIER",
+            "identity_assertion": {"signed": "test-only-assertion", "subject": "business-owner-test"},
+            "identity_context": {
+                "purpose": "catedralx_economic_cycle_authorization",
+                "cycle_id": cycle_id,
+                "cycle_digest": "a" * 64,
+                "proposal": {
+                    "proposal": "Analyze demand evidence for a product page.",
+                    "expected_outcome": "Generate a traceable candidate for independent review.",
+                    "verification_plan": "Compare qualified lead counts across approved periods.",
+                },
+                "measurement": {
+                    "metric": "qualified_leads", "source": "verified_crm_export",
+                    "period": "2026-10", "unit": "leads", "formula": "count_unique",
+                    "value": 12, "observed_at": "2026-11-08T00:00:00+00:00",
+                },
+                "verify_at": 1794115200,
+            },
+        },
+        "_agents_ingress": {
+            "subject": "catedralx-service", "scope": "orchestration:run", "verified": True,
         },
         "execution_boundary": {
             "allowed": ["analysis", "research", "candidate_generation"],
@@ -447,6 +555,8 @@ def _approved_business_proposal_payload(cycle_id="cycle-deterministic-test"):
             "independent_acceptance_required": True,
         },
     }
+    payload["authorization"]["identity_context"]["measurement"] = dict(payload["measurement"])
+    return payload
 
 
 def test_authorized_business_proposal_runs_without_model_calls(monkeypatch):
@@ -465,6 +575,14 @@ def test_authorized_business_proposal_runs_without_model_calls(monkeypatch):
         raise AssertionError("Authorized economic validation must be deterministic when models are off")
 
     monkeypatch.setattr(worker_loop.Master, "execute_task", must_not_call_master)
+    monkeypatch.setattr(
+        worker_loop, "_verify_business_approver_identity",
+        lambda payload, authorization, measurement, proposal: {
+            "subject": "business-owner-test",
+            "permissions": ["economic_cycle_authorize"],
+            "identity_proof_digest": "c" * 64,
+        },
+    )
     payload = _approved_business_proposal_payload()
     task = {
         "task_id": "authorized-business-cycle-test",
@@ -480,6 +598,8 @@ def test_authorized_business_proposal_runs_without_model_calls(monkeypatch):
     assert result["status"] == "candidate"
     assert result["business_cycle_id"] == payload["cycle_id"]
     assert result["business_proposal"]["authorization"]["approved"] is True
+    assert result["business_proposal"]["authorization"]["identity_verified"] is True
+    assert result["business_proposal"]["authorization"]["identity_proof_digest"] == "c" * 64
     assert result["execution_boundary"]["independent_acceptance_required"] is True
     assert result["candidate_id"] == result["result_id"]
     assert result["evidence"][0]["observed_at"] == payload["measurement"]["observed_at"]
@@ -487,7 +607,88 @@ def test_authorized_business_proposal_runs_without_model_calls(monkeypatch):
     assert result["orders_created"] is False
     assert result["orders_executed"] is False
     assert saved[0]["candidate_id"] == result["candidate_id"]
+    assert saved[0]["catedralx_trace_id"] == "trace-authorized-business-cycle"
     assert completed[0]["result_id"] == result["candidate_id"]
+
+
+def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonce(
+    monkeypatch, tmp_path
+):
+    import time
+    import uuid
+    from nacl.signing import SigningKey
+
+    catedralx_root = Path(
+        os.getenv("CATEDRALX_PATH") or (Path(__file__).resolve().parents[1] / "CatedralX")
+    ).resolve()
+    monkeypatch.setenv("CATEDRALX_PATH", str(catedralx_root))
+    monkeypatch.setenv("CATEDRALX_STATE_DIR", str(tmp_path / "catedralx-state"))
+    signing_key = SigningKey.generate()
+    monkeypatch.setenv(
+        "CHALAMANDRA_APPROVER_PUBLIC_KEY",
+        signing_key.verify_key.encode().hex(),
+    )
+
+    from AEX.DECISION import ordenes
+
+    payload = _approved_business_proposal_payload("cycle-real-ed25519-test")
+    authorization = payload["authorization"]
+    measurement = payload["measurement"]
+    proposal = payload["proposal"]
+    nonce = str(uuid.uuid4())
+    assert ordenes._reclamar_nonce_atomico(
+        nonce, "business-owner-test", payload["cycle_id"]
+    ) is True
+
+    now = int(time.time())
+    identity_context = {
+        "purpose": "catedralx_economic_cycle_authorization",
+        "cycle_id": payload["cycle_id"],
+        "cycle_digest": "f" * 64,
+        "proposal": dict(proposal),
+        "measurement": dict(measurement),
+        "verify_at": now,
+    }
+    assertion = {
+        "subject": "business-owner-test",
+        "permissions": ["economic_cycle_authorize"],
+        "purpose": identity_context["purpose"],
+        "cycle_id": payload["cycle_id"],
+        "cycle_digest": identity_context["cycle_digest"],
+        "iat": now,
+        "exp": now + 120,
+        "nonce": nonce,
+    }
+    assertion["signature"] = signing_key.sign(
+        ordenes._canonical_json_ed25519(assertion)
+    ).signature.hex()
+    authorization["identity_assertion"] = assertion
+    authorization["identity_context"] = identity_context
+
+    verified = worker_loop._verify_business_approver_identity(
+        payload, authorization, measurement, proposal
+    )
+    assert verified["subject"] == "business-owner-test"
+    assert verified["permissions"] == ["economic_cycle_authorize"]
+    assert len(verified["identity_proof_digest"]) == 64
+
+    tampered = dict(authorization)
+    tampered["identity_assertion"] = {**assertion, "signature": "00" * 64}
+    with pytest.raises(ValueError, match="human_identity_signature_or_nonce_invalid"):
+        worker_loop._verify_business_approver_identity(
+            payload, tampered, measurement, proposal
+        )
+
+
+def test_authorized_business_proposal_rejects_missing_signed_identity_proof():
+    payload = _approved_business_proposal_payload()
+    payload.pop("_agents_ingress", None)
+    authorization = payload["authorization"]
+    authorization.pop("identity_assertion")
+    with pytest.raises(ValueError, match="human_identity_assertion_missing"):
+        worker_loop._verify_business_approver_identity(
+            payload, authorization, payload["measurement"], payload["proposal"]
+        )
 
 
 def test_authorized_business_proposal_fails_closed_without_approval(monkeypatch):
@@ -542,11 +743,8 @@ def test_stale_lease_does_not_publish_candidate(monkeypatch):
     with pytest.raises(RuntimeError, match="lease is missing, invalid, or expired"):
         worker_loop.process_task({
             "task_id": "stale-lease-worker-test",
-            "objective": "financial_analysis",
-            "payload": json.dumps({
-                "historical_prices": [1.10, 1.11, 1.12],
-                "current_price": 1.13,
-            }),
+            "objective": "catedralx_economic_evaluation",
+            "payload": json.dumps(_economic_evaluation_payload()),
             "trace_id": "trace-stale-lease-worker-test",
             "lease_token": "expired-worker-lease",
         })

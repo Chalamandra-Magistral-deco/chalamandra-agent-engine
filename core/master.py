@@ -564,7 +564,13 @@ class Master:
             {"name": tool, "arguments": kwargs},
         )
 
-    async def execute_task(self, task: str, *, allowed_tools: Sequence[str] | None = None):
+    async def execute_task(
+        self,
+        task: str,
+        *,
+        allowed_tools: Sequence[str] | None = None,
+        trace_id: str | None = None,
+    ):
         """
         Descompone y ejecuta una tarea usando los perfiles y límites del motor.
 
@@ -602,11 +608,21 @@ class Master:
             if unknown:
                 raise ValueError(f"Herramientas no registradas: {sorted(unknown)}")
             allowed_tools = sorted(permitted)
-        subtasks = await self.decomposer.decompose(task)
+        if trace_id is None:
+            # Preserve the pre-tracing call contract for existing adapters and test doubles.
+            subtasks = await self.decomposer.decompose(task)
+            if allowed_tools is None:
+                return await self.executor.execute_plan(task, subtasks)
+            return await self.executor.execute_plan(
+                task, subtasks, allowed_tools=allowed_tools
+            )
+
+        subtasks = await self.decomposer.decompose(task, trace_id=trace_id)
         if allowed_tools is None:
-            return await self.executor.execute_plan(task, subtasks)
+            return await self.executor.execute_plan(task, subtasks, trace_id=trace_id)
         return await self.executor.execute_plan(
             task,
             subtasks,
             allowed_tools=allowed_tools,
+            trace_id=trace_id,
         )

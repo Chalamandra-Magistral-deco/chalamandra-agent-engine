@@ -14,15 +14,29 @@ from adapters.base import ModelResponse
 DEFAULT_PATH = Path("logs/traces.jsonl")
 
 
+def _configured_default_path() -> Path:
+    """Resolve a persistent trace destination without requiring deployment changes."""
+    explicit = os.getenv("CHALAMANDRA_AGENTS_TRACE_PATH")
+    if explicit and explicit.strip():
+        return Path(explicit).expanduser()
+    state_dir = os.getenv("CHALAMANDRA_STATE_DIR")
+    if state_dir and state_dir.strip():
+        # Keep model-call telemetry separate from api/trace_store.py HTTP ingress traces.
+        return Path(state_dir).expanduser() / "agents" / "model_traces.jsonl"
+    return DEFAULT_PATH
+
+
 class Tracer:
     """Registra cada ModelResponse en un archivo JSONL."""
 
-    def __init__(self, path: str | Path = DEFAULT_PATH) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         """
         Configura el destino del archivo JSONL y crea el directorio padre.
 
         Args:
-            path (str | Path): Ruta del archivo de trazas; por defecto `logs/traces.jsonl`.
+            path (str | Path | None): Destino opcional. Si se omite, prioriza
+                `CHALAMANDRA_AGENTS_TRACE_PATH`, luego el volumen persistente
+                `CHALAMANDRA_STATE_DIR/agents/model_traces.jsonl` y finalmente `logs/traces.jsonl`.
 
         Returns:
             None.
@@ -38,7 +52,7 @@ class Tracer:
             tracer = Tracer(Path.home() / ".local/state/chalamandra/agents/traces.jsonl")
         """
 
-        self.path = Path(path)
+        self.path = Path(path).expanduser() if path is not None else _configured_default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, response: ModelResponse) -> None:

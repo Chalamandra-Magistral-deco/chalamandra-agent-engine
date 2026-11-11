@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -122,10 +122,21 @@ class ModelRequest(BaseModel):
     role: ModelRole = ModelRole.AGENT
     skills: list[Skill] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Canonical W3C trace identity shared with the originating task.
+    trace_id: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$"
+    )
     # Native tool definitions and conversation history are optional so adapters
     # that do not support tool calling remain backward-compatible.
     tools: list[dict[str, Any]] = Field(default_factory=list)
     messages: list[dict[str, Any]] | None = None
+
+    @field_validator("trace_id")
+    @classmethod
+    def _reject_zero_trace_id(cls, value: str | None) -> str | None:
+        if value == "0" * 32:
+            raise ValueError("trace_id W3C no puede ser todo ceros")
+        return value
 
 
 class ModelResponse(BaseModel):
@@ -133,6 +144,10 @@ class ModelResponse(BaseModel):
 
     call_id: str
     model: str
+    # Canonical W3C trace identity; None means the caller supplied no trace.
+    trace_id: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$"
+    )
     model_version: str = "unknown"
     role: ModelRole
     output: str
@@ -145,6 +160,13 @@ class ModelResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
     raw: dict[str, Any] | None = None  # respuesta cruda del proveedor, opcional
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("trace_id")
+    @classmethod
+    def _reject_zero_trace_id(cls, value: str | None) -> str | None:
+        if value == "0" * 32:
+            raise ValueError("trace_id W3C no puede ser todo ceros")
+        return value
 
     @property
     def total_tokens(self) -> int:

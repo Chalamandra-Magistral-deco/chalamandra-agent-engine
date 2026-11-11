@@ -36,7 +36,10 @@ def _configure(monkeypatch, tmp_path: Path, key: SigningKey):
     monkeypatch.setattr(
         candidate_store,
         "get_candidate",
-        lambda candidate_id: {"candidate_id": candidate_id, "status": "candidate", "evidence": []},
+        lambda candidate_id: {
+            "candidate_id": candidate_id, "status": "candidate", "evidence": [],
+            "trace_id": "1234567890abcdef1234567890abcdef",
+        },
     )
     monkeypatch.setattr(candidate_store, "compute_evidence_digest", lambda candidate: "a" * 64)
     path = tmp_path / "acceptance_store.jsonl"

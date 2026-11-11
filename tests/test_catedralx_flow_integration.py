@@ -109,6 +109,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
     dispatch_agents = importlib.util.module_from_spec(dispatch_spec)
     dispatch_spec.loader.exec_module(dispatch_agents)
 
+    monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
     secret = "synthetic-integration-general-jwt-secret-2026"
     service_secret = "synthetic-catedralx-service-jwt-secret-2026"
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", secret)
@@ -213,27 +214,21 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
         task = task_bus.get_next_task()
         assert task is not None
         assert task["task_id"] == first["task_id"]
-        captured: dict = {}
-
-        class FakeMaster:
+        class ForbiddenMaster:
             def __init__(self):
-                pass
-
-            async def execute_task(self, objective, *, allowed_tools=None):
-                captured["prompt"] = objective
-                captured["allowed_tools"] = allowed_tools
-                return {"summary": "Synthetic candidate; no external action taken"}
+                raise AssertionError("proposal review is deterministic and must not call Master")
 
         monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
-        monkeypatch.setattr(worker_loop, "Master", FakeMaster)
+        monkeypatch.setattr(worker_loop, "Master", ForbiddenMaster)
         candidate = worker_loop.process_task(task)
-        assert candidate["status"] == "candidate"
+        assert candidate["status"] == "candidate", candidate["summary"]
         assert candidate["analysis_only"] is True
         assert candidate["orders_created"] is False
         assert candidate["orders_executed"] is False
-        assert captured["allowed_tools"] == []
-        assert cycle_id in captured["prompt"]
-        assert "external_contact" in captured["prompt"]
+        assert candidate["business_cycle_id"] == cycle_id
+        assert candidate["business_proposal"]["authorization"]["approved"] is True
+        assert candidate["execution_boundary"]["independent_acceptance_required"] is True
+        assert candidate["catedralx_trace_id"] == candidate["trace_id"]
 
         read_token = jwt.encode(
             {"scope": "orchestration:read results:read", "sub": "independent-verifier", "exp": int(time.time()) + 60},
@@ -443,7 +438,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         task = task_bus.get_next_task()
         assert task is not None
         candidate = worker_loop.process_task(task)
-        assert candidate["status"] == "candidate"
+        assert candidate["status"] == "candidate", candidate["summary"]
         assert candidate["business_cycle_id"] == cycle_id
         assert candidate["result_id"] == candidate["candidate_id"]
         assert candidate["orders_created"] is False

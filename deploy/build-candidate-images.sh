@@ -77,7 +77,7 @@ printf 'CatedralX: %s (dirty=%s, tree=%s)\n' "$CATEDRALX_REVISION" "$CATEDRALX_C
 printf 'New validation tags only:\n  %s\n  %s\n  %s\n' "$CATEDRALX_IMAGE" "$API_IMAGE" "$WORKER_IMAGE"
 
 for image in "$CATEDRALX_IMAGE" "$API_IMAGE" "$WORKER_IMAGE"; do
-  if docker image inspect "$image" >/dev/null 2>&1; then
+  if sudo docker image inspect "$image" >/dev/null 2>&1; then
     echo "BLOCKED: el tag candidato ya existe; no se sobrescribirá: $image" >&2
     exit 3
   fi
@@ -88,7 +88,7 @@ if [[ "$PLAN" == "true" ]]; then
   exit 0
 fi
 
-docker build \
+sudo docker build \
   --file "$CATEDRALX_ROOT/Dockerfile" \
   --build-arg "CATEDRALX_REVISION=$CATEDRALX_REVISION" \
   --build-arg "CATEDRALX_CODE_DIRTY=$CATEDRALX_CODE_DIRTY" \
@@ -98,14 +98,14 @@ docker build \
   --tag "$CATEDRALX_IMAGE" \
   "$CATEDRALX_ROOT"
 
-actual_catedralx_revision="$(docker image inspect "$CATEDRALX_IMAGE" --format '{{index .Config.Labels "com.chalamandra.catedralx.revision"}}')"
-actual_catedralx_dirty="$(docker image inspect "$CATEDRALX_IMAGE" --format '{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}')"
+actual_catedralx_revision="$(sudo docker image inspect "$CATEDRALX_IMAGE" --format '{{index .Config.Labels "com.chalamandra.catedralx.revision"}}')"
+actual_catedralx_dirty="$(sudo docker image inspect "$CATEDRALX_IMAGE" --format '{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}')"
 [[ "$actual_catedralx_revision" == "$CATEDRALX_REVISION" && "$actual_catedralx_dirty" == "$CATEDRALX_CODE_DIRTY" ]] || {
   echo "BLOCKED: procedencia CatedralX no coincide con el checkout." >&2
   exit 4
 }
 
-docker build \
+sudo docker build \
   --file "$ROOT/deploy/Dockerfile" \
   --build-arg "CATEDRALX_BASE_IMAGE=$CATEDRALX_IMAGE" \
   --build-arg "AGENTS_REVISION=$AGENTS_REVISION" \
@@ -119,7 +119,7 @@ docker build \
   --tag "$API_IMAGE" \
   "$ROOT"
 
-docker build \
+sudo docker build \
   --file "$ROOT/deploy/Dockerfile.worker" \
   --build-arg "AGENTS_BASE_IMAGE=$API_IMAGE" \
   --label "com.chalamandra.agents.worktree.sha256=$AGENTS_TREE_SHA256" \
@@ -130,12 +130,12 @@ docker build \
   "$ROOT"
 
 for image in "$API_IMAGE" "$WORKER_IMAGE"; do
-  actual_agents_revision="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.revision"}}')"
-  actual_agents_dirty="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.code.dirty"}}')"
-  actual_catedralx_revision="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.revision"}}')"
-  actual_catedralx_dirty="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}')"
-  actual_agents_tree="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.worktree.sha256"}}')"
-  actual_catedralx_tree="$(docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.tree.sha256"}}')"
+  actual_agents_revision="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.revision"}}')"
+  actual_agents_dirty="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.code.dirty"}}')"
+  actual_catedralx_revision="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.revision"}}')"
+  actual_catedralx_dirty="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.code.dirty"}}')"
+  actual_agents_tree="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.agents.worktree.sha256"}}')"
+  actual_catedralx_tree="$(sudo docker image inspect "$image" --format '{{index .Config.Labels "com.chalamandra.catedralx.tree.sha256"}}')"
 
   [[ "$actual_agents_revision" == "$AGENTS_REVISION" && "$actual_agents_dirty" == "$AGENTS_CODE_DIRTY" ]] || {
     echo "BLOCKED: procedencia Agents incorrecta en $image" >&2; exit 4;

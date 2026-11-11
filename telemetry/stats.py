@@ -126,20 +126,29 @@ def cost_totals(records: Iterable[dict], model: str | None = None) -> dict:
         model (str | None): Filtro opcional por modelo.
 
     Returns:
-        dict: Cantidad de registros y coste total en USD redondeado a seis decimales.
+        dict: Coste USD conocido, número de registros con/sin coste y cobertura.
+            Los costes ausentes nunca se presentan como coste cero.
 
     Raises:
         TypeError: Si un valor de coste no es compatible con la suma numérica.
 
     Side effects:
-        Ninguno; no consulta tarifas ni estima costes ausentes, que se tratan como cero.
+        Ninguno; no consulta tarifas ni estima costes ausentes.
 
     Example:
         costs = cost_totals(tracer.iter_records(), model="gpt")
     """
     recs = _filter(records, model)
-    total = sum(r.get("cost_usd", 0.0) for r in recs)
-    return {"count": len(recs), "cost_usd": round(total, 6)}
+    known = [r["cost_usd"] for r in recs if r.get("cost_usd") is not None]
+    total = sum(known)
+    missing = len(recs) - len(known)
+    return {
+        "count": len(recs),
+        "cost_usd": round(total, 6),
+        "cost_known_count": len(known),
+        "cost_missing_count": missing,
+        "cost_coverage_pct": round((len(known) / len(recs)) * 100, 2) if recs else 0.0,
+    }
 
 
 def error_rate(records: Iterable[dict], model: str | None = None) -> dict:

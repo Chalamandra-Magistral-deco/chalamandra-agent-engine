@@ -156,7 +156,10 @@ def test_get_result_blocked_with_rejection(api_server):
 def test_acceptance_blocks_distribution_until_task_state_is_accepted(
     mock_digest, mock_get_candidate, api_server, tmp_path
 ):
-    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
+    mock_get_candidate.return_value = {
+        "candidate_id": "test-123", "status": "candidate", "evidence": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
     mock_digest.return_value = "a" * 64
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
@@ -202,7 +205,10 @@ def test_acceptance_blocks_distribution_until_task_state_is_accepted(
 def test_acceptance_reports_distribution_pending_when_no_delivery_succeeds(
     mock_digest, mock_get_candidate, api_server, tmp_path
 ):
-    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
+    mock_get_candidate.return_value = {
+        "candidate_id": "test-123", "status": "candidate", "evidence": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
     mock_digest.return_value = "a" * 64
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
@@ -230,7 +236,10 @@ def test_acceptance_reports_distribution_pending_when_no_delivery_succeeds(
 def test_acceptance_conflicting_replay_is_rejected(
     mock_digest, mock_get_candidate, api_server, tmp_path
 ):
-    mock_get_candidate.return_value = {"candidate_id": "test-123", "status": "candidate", "evidence": []}
+    mock_get_candidate.return_value = {
+        "candidate_id": "test-123", "status": "candidate", "evidence": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
     mock_digest.return_value = "a" * 64
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
@@ -342,6 +351,62 @@ def test_acceptance_with_tampered_field_fails(api_server):
 
 @patch("api.candidate_store.get_candidate")
 @patch("api.candidate_store.compute_evidence_digest")
+def test_acceptance_rejects_trace_id_not_owned_by_candidate(
+    mock_digest, mock_get_candidate, api_server
+):
+    mock_get_candidate.return_value = {
+        "candidate_id": "test-123", "status": "candidate", "evidence": [],
+        "trace_id": "2234567890abcdef1234567890abcdef",
+    }
+    mock_digest.return_value = "a" * 64
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+    with patch("api.webhook_dispatcher.dispatch_event") as dispatch:
+        status, body = _post(
+            f"{api_server}/v1/acceptance", payload,
+            {"Authorization": f"Bearer {make_jwt()}"},
+        )
+    assert status == 400
+    assert "trace_id" in body["error"]
+    dispatch.assert_not_called()
+
+
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
+def test_acceptance_replay_rejects_payload_mutation_with_reused_signature(
+    mock_digest, mock_get_candidate, api_server, tmp_path
+):
+    mock_get_candidate.return_value = {
+        "candidate_id": "test-123", "status": "candidate", "evidence": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+    mock_digest.return_value = "a" * 64
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"),
+        patch("api.task_bus.mark_result_accepted", return_value=1),
+        patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "accepted"}]),
+        patch("api.webhook_dispatcher.dispatch_event", return_value=1) as dispatch,
+    ):
+        first_status, _ = _post(
+            f"{api_server}/v1/acceptance", payload,
+            {"Authorization": f"Bearer {make_jwt()}"},
+        )
+        assert first_status == 201
+        tampered = dict(payload)
+        tampered["reasons"] = ["payload changed after signing"]
+        replay_status, replay_body = _post(
+            f"{api_server}/v1/acceptance", tampered,
+            {"Authorization": f"Bearer {make_jwt()}"},
+        )
+    assert replay_status == 409
+    assert replay_body["error"] == "acceptance_already_recorded"
+    assert dispatch.call_count == 1
+
+
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
 def test_acceptance_cannot_publish_blocked_candidate(
     mock_digest, mock_get_candidate, api_server
 ):
@@ -349,6 +414,7 @@ def test_acceptance_cannot_publish_blocked_candidate(
         "candidate_id": "blocked-123",
         "status": "blocked",
         "evidence": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
     }
     mock_digest.return_value = "b" * 64
     payload = make_decision(candidate_id="blocked-123", digest="b" * 64)

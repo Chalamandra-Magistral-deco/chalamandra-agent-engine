@@ -168,7 +168,9 @@ class Decomposer:
         self.orchestrator = orchestrator
         self.model = model
 
-    async def decompose(self, task: str) -> list[Subtask]:
+    async def decompose(
+        self, task: str, *, trace_id: str | None = None
+    ) -> list[Subtask]:
         """
         Solicita un plan JSON y lo normaliza a objetos `Subtask`.
 
@@ -198,6 +200,7 @@ class Decomposer:
             temperature=0.0,
             max_tokens=200,
             role=ModelRole.PLANNER,
+            trace_id=trace_id,
         )
 
         response = await self.orchestrator.run(self.model, request)

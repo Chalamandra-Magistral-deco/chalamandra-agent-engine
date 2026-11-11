@@ -16,6 +16,7 @@ from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
 from api import task_bus
+from api.task_contracts import validate_task_contract
 from api import candidate_store
 from api import trace_store
 from api.trace_parser import parse_traceparent
@@ -710,10 +711,11 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 existing = acceptance_store.get_acceptance(candidate_id)
                 replay = existing is not None
                 if existing:
-                    same_decision = (
-                        existing.get("decision_id") == body.get("decision_id")
-                        and existing.get("signature") == body.get("signature")
-                    )
+                    replay_payload = {
+                        key: body.get(key) for key in acceptance_store._CANONICAL_FIELDS
+                    }
+                    replay_payload["signature"] = body.get("signature")
+                    same_decision = existing == replay_payload
                     if not same_decision:
                         self._send_json(HTTPStatus.CONFLICT, {"error": "acceptance_already_recorded"})
                         return
@@ -721,7 +723,10 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     outcome = existing.get("outcome")
                 else:
                     decision_id = acceptance_store.record_acceptance(body)
-                    outcome = body.get("outcome")
+                    existing = acceptance_store.get_acceptance(candidate_id)
+                    if not existing:
+                        raise ValueError("La decisión registrada no pudo recuperarse del ledger")
+                    outcome = existing.get("outcome")
 
                 # An accepted decision is not distributable until TaskBus confirms
                 # that every task linked to this result is in the accepted state.
@@ -747,7 +752,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                         delivered_count = webhook_dispatcher.dispatch_event(
                             event_type="result.accepted",
                             result_id=candidate_id,
-                            trace_id=body.get("trace_id", "unknown"),
+                            trace_id=existing["trace_id"],
                             event_id=f"acceptance:{decision_id}",
                         )
                     except (OSError, RuntimeError, ValueError):
@@ -800,6 +805,27 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             payload = body.get("payload", {})
             if not isinstance(payload, dict):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "payload_must_be_object"})
+                return
+            if objective.strip() == "catedralx_economic_proposal_review":
+                if path != "/internal/v1/orchestration/runs":
+                    self._send_json(HTTPStatus.FORBIDDEN, {
+                        "error": "economic_proposal_requires_authenticated_catedralx_service"
+                    })
+                    return
+                # This metadata is written only after JWT subject+scope verification.
+                # Caller-supplied values are discarded and cannot assert their own ingress.
+                payload = dict(payload)
+                payload["_agents_ingress"] = {
+                    "subject": "catedralx-service",
+                    "scope": "orchestration:run",
+                    "verified": True,
+                }
+            contract_error = validate_task_contract(objective, payload)
+            if contract_error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "invalid_task_contract",
+                    "detail": contract_error,
+                })
                 return
             permissions = body.get("permissions", {})
             if not isinstance(permissions, dict):
@@ -987,17 +1013,32 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_idempotency_key"})
                 return
             body = self._read_json_body()
-            if not body:
+            if not isinstance(body, dict):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
-            
-            # Encolar en el TaskBus unificado
+            objective = body.get("type")
+            payload = body.get("payload")
+            if not isinstance(objective, str) or not objective.strip():
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "task_type_required"})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "payload_must_be_object"})
+                return
+            contract_error = validate_task_contract(objective, payload)
+            if contract_error:
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "invalid_task_contract",
+                    "detail": contract_error,
+                })
+                return
+
+            # Encolar en el TaskBus unificado únicamente tras validar el tipo y payload.
             trace_id = self.trace_id
             try:
                 task_id = task_bus.enqueue_task(
                     {
-                        "objective": body.get("type", "financial_analysis"),
-                        "payload": body.get("payload", body),
+                        "objective": objective.strip(),
+                        "payload": payload,
                         "trace_id": trace_id
                     },
                     idempotency_key=job_idem_key
