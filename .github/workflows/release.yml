@@ -85,6 +85,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Validate Docker Compose configuration
+        run: |
+          cp config/.env.example config/.env
+          cp config/.env.example config/worker.env
+          docker compose config --quiet
+
       - name: Build pinned canonical CatedralX base image
         run: |
           CATEDRALX_REVISION="$(git -C CatedralX rev-parse HEAD)"
