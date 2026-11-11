@@ -619,7 +619,18 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             body = self._read_json_body()
             if body is None:
                 return
-            result_id = body.get("result_id", body.get("candidate_id"))
+            supplied_result_id = body.get("result_id")
+            supplied_candidate_id = body.get("candidate_id")
+            if (
+                supplied_result_id is not None
+                and supplied_candidate_id is not None
+                and supplied_result_id != supplied_candidate_id
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {
+                    "error": "distribution_identity_mismatch",
+                })
+                return
+            result_id = supplied_result_id or supplied_candidate_id
             event_type = body.get("event_type", "result.accepted")
             if not isinstance(result_id, str) or not result_id.strip():
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "result_id_required"})
