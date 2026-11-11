@@ -1,6 +1,6 @@
 # Dedicated worker runtime. Build the shared application image first, then pass
 # it as --build-arg AGENTS_BASE_IMAGE=<validated-image-tag>.
-ARG AGENTS_BASE_IMAGE=chalamandra-agent-engine:integrated-wip-20261028-r4
+ARG AGENTS_BASE_IMAGE=agents-api:candidate-v4.2
 FROM ${AGENTS_BASE_IMAGE}
 USER chalamandra
 ENV CHALAMANDRA_WORKER_HEARTBEAT_PATH=/home/chalamandra/.local/state/chalamandra/agents/worker_heartbeat.json
