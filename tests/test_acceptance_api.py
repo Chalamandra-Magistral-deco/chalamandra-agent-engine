@@ -22,10 +22,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER_CLI = REPO_ROOT / "verifier" / "independent_acceptance_verifier.py"
 
 
-def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write"):
+def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write", subject=None):
     import time
 
     payload = {"scope": scopes, "exp": int(time.time()) + 3600}
+    if subject:
+        payload["sub"] = subject
     return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 
@@ -153,6 +155,72 @@ def test_get_result_blocked_with_rejection(api_server):
 
 @patch("api.candidate_store.get_candidate")
 @patch("api.candidate_store.compute_evidence_digest")
+def test_internal_distribution_blocks_when_taskbus_has_not_reconciled_acceptance(api_server):
+    candidate = {
+        "candidate_id": "test-123", "status": "candidate",
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+    with patch("api.candidate_store.get_candidate", return_value=candidate), \
+         patch("api.acceptance_store.get_acceptance", return_value={"outcome": "accepted", "trace_id": candidate["trace_id"]}), \
+         patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "candidate"}]), \
+         patch("api.webhook_dispatcher.dispatch_event") as dispatch:
+        status, body = _post(
+            f"{api_server}/internal/v1/distributions",
+            {"result_id": "test-123"},
+            headers={"Authorization": f"Bearer {make_jwt('results:publish', 'catedralx-service')}"},
+        )
+    assert status == 409
+    assert body["error"] == "acceptance_operational_sync_pending"
+    assert body["delivery_status"] == "blocked"
+    dispatch.assert_not_called()
+
+
+def test_internal_distribution_requires_all_linked_tasks_accepted(api_server):
+    candidate = {
+        "candidate_id": "test-123", "status": "candidate",
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+    with patch("api.candidate_store.get_candidate", return_value=candidate), \
+         patch("api.acceptance_store.get_acceptance", return_value={"outcome": "accepted", "trace_id": candidate["trace_id"]}), \
+         patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "accepted"}]), \
+         patch("api.webhook_dispatcher.dispatch_event", return_value=1) as dispatch:
+        status, body = _post(
+            f"{api_server}/internal/v1/distributions",
+            {"result_id": "test-123"},
+            headers={"Authorization": f"Bearer {make_jwt('results:publish', 'catedralx-service')}"},
+        )
+    assert status == 202
+    assert body["status"] == "dispatched"
+    dispatch.assert_called_once()
+
+
+def test_rejected_acceptance_closes_taskbus_without_distribution(
+    api_server, tmp_path
+):
+    candidate = {
+        "candidate_id": "test-123", "status": "candidate",
+        "evidence": [], "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+    payload = make_decision(outcome="rejected")
+    payload["reasons"] = ["evidence insufficient"]
+    payload["signature"] = sign_test_decision(payload)
+    with patch("api.candidate_store.get_candidate", return_value=candidate), \
+         patch("api.candidate_store.compute_evidence_digest", return_value=payload["evidence_digest"]), \
+         patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"), \
+         patch("api.task_bus.mark_result_rejected", return_value=1) as mark_rejected, \
+         patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "rejected"}]), \
+         patch("api.webhook_dispatcher.dispatch_event") as dispatch:
+        status, body = _post(
+            f"{api_server}/v1/acceptance",
+            payload,
+            headers={"Authorization": f"Bearer {make_jwt()}"},
+        )
+    assert status == 201
+    assert body["outcome"] == "rejected"
+    mark_rejected.assert_called_once_with("test-123")
+    dispatch.assert_not_called()
+
+
 def test_acceptance_blocks_distribution_until_task_state_is_accepted(
     mock_digest, mock_get_candidate, api_server, tmp_path
 ):
