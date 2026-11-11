@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -681,6 +682,7 @@ def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonc
 
 def test_authorized_business_proposal_rejects_missing_signed_identity_proof():
     payload = _approved_business_proposal_payload()
+    payload.pop("_agents_ingress", None)
     authorization = payload["authorization"]
     authorization.pop("identity_assertion")
     with pytest.raises(ValueError, match="human_identity_assertion_missing"):
