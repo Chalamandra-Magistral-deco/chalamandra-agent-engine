@@ -37,9 +37,9 @@ def _economic_payload():
             "minimum_resilience": 0.8,
         },
         "central_dimensions_bp": {
+            "viability_bp": 9000,
             "human_value_bp": 9000,
             "distribution_bp": 9000,
-            "reinvestment_surplus": "1.0",
             "resilience_bp": 9000,
             "evidence_bp": 9000,
         },
@@ -83,6 +83,22 @@ def test_market_source_attestation_is_required():
     payload.pop("source_attestation")
     assert validate_task_contract(FINANCIAL_MARKET_ANALYSIS, payload) == (
         "market_source_attestation_required"
+    )
+
+
+def test_central_dimensions_rejects_noncanonical_reinvestment_field():
+    payload = _economic_payload()
+    payload["central_dimensions_bp"]["reinvestment_surplus"] = "1.0"
+    assert validate_task_contract(CATEDRALX_ECONOMIC_EVALUATION, payload) == (
+        "central_dimensions_bp_noncanonical_fields:reinvestment_surplus"
+    )
+
+
+def test_central_dimensions_validates_explicit_viability_bp():
+    payload = _economic_payload()
+    payload["central_dimensions_bp"]["viability_bp"] = 10001
+    assert validate_task_contract(CATEDRALX_ECONOMIC_EVALUATION, payload) == (
+        "central_dimensions_bp_invalid_fields:viability_bp"
     )
 
 
