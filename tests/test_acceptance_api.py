@@ -519,3 +519,28 @@ def test_acceptance_store_corruption_fails_closed(tmp_path):
     with patch("api.acceptance_store._acceptance_file", return_value=path):
         with pytest.raises(ValueError, match="acceptance_store.jsonl inválido"):
             get_acceptance("test-123")
+
+def test_disabling_subscription_preserves_public_record_fields(tmp_path):
+    from api import subscription_store
+
+    ledger = tmp_path / "subscriptions.jsonl"
+    with (
+        patch("api.subscription_store._subs_file", return_value=ledger),
+        patch("api.subscription_store.resolve_safe_url", return_value=object()),
+    ):
+        created = subscription_store.create_subscription(
+            "https://receiver.example/webhook",
+            ["result.accepted"],
+        )
+        assert subscription_store.disable_subscription(created["subscription_id"])
+        listed = subscription_store.list_subscriptions()
+
+    assert len(listed) == 1
+    disabled = listed[0]
+    assert disabled["subscription_id"] == created["subscription_id"]
+    assert disabled["endpoint_url"] == created["endpoint_url"]
+    assert disabled["event_types"] == created["event_types"]
+    assert disabled["created_at"] == created["created_at"]
+    assert disabled["status"] == "disabled"
+    assert disabled["updated_at"]
+
