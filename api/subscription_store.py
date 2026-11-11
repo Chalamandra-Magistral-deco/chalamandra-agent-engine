@@ -201,12 +201,11 @@ def disable_subscription(sub_id: str) -> bool:
         matches = store.find(db, "subscription_id", sub_id)
         if not matches:
             return False
-        store.append(
-            db,
-            {
-                "subscription_id": sub_id,
-                "status": "disabled",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        # Preserve the complete public subscription record in each append-only
+        # state transition. latest_by_key() returns only the newest row.
+        record = dict(matches[-1])
+        record["subscription_id"] = sub_id
+        record["status"] = "disabled"
+        record["updated_at"] = datetime.now(timezone.utc).isoformat()
+        store.append(db, record)
     return True
