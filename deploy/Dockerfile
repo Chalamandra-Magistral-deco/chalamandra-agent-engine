@@ -1,4 +1,4 @@
-ARG CATEDRALX_BASE_IMAGE=catedralx:v1.0-canonico
+ARG CATEDRALX_BASE_IMAGE=catedralx:v4.2
 FROM ${CATEDRALX_BASE_IMAGE} AS catedralx
 FROM python:3.12-slim
 ARG AGENTS_REVISION=unknown
