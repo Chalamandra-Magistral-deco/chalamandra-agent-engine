@@ -274,6 +274,7 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     monkeypatch.setenv("CATEDRALX_STATE_PATH", str(tmp_path / "catedralx" / "hormonas.json"))
     monkeypatch.setenv("CATEDRALX_FEEDBACK_PATH", str(tmp_path / "catedralx" / "feedback.jsonl"))
     monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", str(tmp_path / "catedralx" / "results.jsonl"))
+    monkeypatch.setenv("CHALAMANDRA_TRACE_LOG_PATH", str(tmp_path / "agents-state" / "traces.jsonl"))
     for secret_name in (
         "CHALAMANDRA_ED25519_SEED",
         "CHALAMANDRA_VERIFIER_SECRET",
@@ -289,7 +290,6 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         subscription_store,
         distribution_store,
         webhook_dispatcher,
-        trace_store,
     ):
         monkeypatch.setattr(module, "_state_dir", lambda state_dir=state_dir: state_dir)
 
