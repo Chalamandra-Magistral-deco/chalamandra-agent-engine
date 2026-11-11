@@ -2,6 +2,7 @@
 import asyncio
 import inspect
 import os
+import re
 import signal
 import threading
 import multiprocessing
@@ -93,10 +94,6 @@ def _run_catedralx(payload: dict) -> dict:
     if not math.isfinite(current_price) or current_price <= 0:
         return {"status": "BLOCKED", "reason": "invalid_current_price"}
 
-    trace_id = payload.get("trace_id")
-    if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
-        return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
-
     snapshot = {
         "PERCEIVE": {
             "historial_precios": normalized_prices,
@@ -122,6 +119,10 @@ def _run_catedralx(payload: dict) -> dict:
     source_error = _verify_market_source_attestation(payload)
     if source_error:
         return {"status": "BLOCKED", "reason": source_error}
+    trace_id = payload.get("trace_id")
+    if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
+        return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
+
     fd, temp_path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
