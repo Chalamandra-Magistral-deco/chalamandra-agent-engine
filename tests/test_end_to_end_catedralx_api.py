@@ -142,9 +142,9 @@ def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path
                 "minimum_resilience": 0.8,
             },
             "central_dimensions_bp": {
+                "viability_bp": 9000,
                 "human_value_bp": 9000,
                 "distribution_bp": 9000,
-                "reinvestment_surplus": "1.0",
                 "resilience_bp": 9000,
                 "evidence_bp": 9000,
             },
