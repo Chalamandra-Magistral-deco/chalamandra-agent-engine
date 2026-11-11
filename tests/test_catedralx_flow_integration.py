@@ -109,6 +109,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
     dispatch_agents = importlib.util.module_from_spec(dispatch_spec)
     dispatch_spec.loader.exec_module(dispatch_agents)
 
+    monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
     secret = "synthetic-integration-general-jwt-secret-2026"
     service_secret = "synthetic-catedralx-service-jwt-secret-2026"
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", secret)
@@ -220,7 +221,7 @@ def test_catedralx_authorized_proposal_flows_through_agents_to_acceptance_gate(
         monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
         monkeypatch.setattr(worker_loop, "Master", ForbiddenMaster)
         candidate = worker_loop.process_task(task)
-        assert candidate["status"] == "candidate"
+        assert candidate["status"] == "candidate", candidate["summary"], candidate["summary"]
         assert candidate["analysis_only"] is True
         assert candidate["orders_created"] is False
         assert candidate["orders_executed"] is False
