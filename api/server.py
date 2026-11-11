@@ -647,6 +647,14 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "delivery_status": "pending_verification",
                 })
                 return
+            task_states = task_bus.get_result_task_statuses(result_id)
+            if not task_states or any(item.get("status") != "accepted" for item in task_states):
+                self._send_json(HTTPStatus.CONFLICT, {
+                    "error": "acceptance_operational_sync_pending",
+                    "task_states": task_states,
+                    "delivery_status": "blocked",
+                })
+                return
             trace_id = acceptance.get("trace_id") or candidate.get("trace_id")
             if not isinstance(trace_id, str) or len(trace_id) != 32:
                 self._send_json(HTTPStatus.CONFLICT, {"error": "accepted_result_trace_id_invalid"})
@@ -768,6 +776,22 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                             "decision_id": decision_id,
                             "delivered_count": delivered_count,
                             "distribution_status": "pending_retry",
+                        })
+                        return
+
+                elif outcome == "rejected":
+                    transitioned = task_bus.mark_result_rejected(candidate_id)
+                    task_states = task_bus.get_result_task_statuses(candidate_id)
+                    all_tasks_rejected = bool(task_states) and all(
+                        item.get("status") == "rejected" for item in task_states
+                    )
+                    if not all_tasks_rejected:
+                        self._send_json(HTTPStatus.CONFLICT, {
+                            "error": "rejection_operational_sync_pending",
+                            "decision_id": decision_id,
+                            "transitioned_tasks": transitioned,
+                            "task_states": task_states,
+                            "distribution_status": "not_applicable",
                         })
                         return
 
