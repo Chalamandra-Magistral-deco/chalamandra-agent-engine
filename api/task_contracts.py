@@ -12,12 +12,8 @@ import re
 from datetime import datetime
 from typing import Any
 
-try:
-    from nacl.exceptions import BadSignatureError
-    from nacl.signing import VerifyKey
-except ImportError:  # pragma: no cover - deployment must install PyNaCl
-    BadSignatureError = Exception
-    VerifyKey = None
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
 
 FINANCIAL_MARKET_ANALYSIS = "financial_market_analysis"
 CATEDRALX_ECONOMIC_EVALUATION = "catedralx_economic_evaluation"
@@ -65,8 +61,6 @@ def _verify_market_source_attestation(payload: dict[str, Any]) -> str | None:
     expected_key_id = os.getenv("CHALAMANDRA_MARKET_SOURCE_KEY_ID", "").strip()
     if not public_hex or not expected_key_id:
         return "market_source_verification_not_configured"
-    if VerifyKey is None:
-        return "market_source_verification_unavailable"
     if not re.fullmatch(r"[0-9a-fA-F]{64}", public_hex):
         return "market_source_public_key_invalid"
     attestation = payload.get("source_attestation")
