@@ -389,10 +389,18 @@ def catedralx_reasoning_tool(
         if not isinstance(evaluation_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", evaluation_hash):
             evaluation_hash = None
             consistency_warnings.append("La Regla Central no proporcionó un evaluation_hash SHA-256 válido.")
-        trace_candidate = trace_id or uuid.uuid4().hex
-        if not isinstance(trace_candidate, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_candidate) or trace_candidate == "0" * 32:
+        if trace_id is None:
             trace_candidate = uuid.uuid4().hex
-            consistency_warnings.append("El trace_id recibido no cumple el formato W3C; se generó uno local.")
+        elif (
+            isinstance(trace_id, str)
+            and re.fullmatch(r"[0-9a-f]{32}", trace_id)
+            and trace_id != "0" * 32
+        ):
+            trace_candidate = trace_id
+        else:
+            raise ValueError(
+                "trace_id explícito inválido; se rechaza para preservar la correlación distribuida."
+            )
 
         directional_decisions = {
             "buy", "sell", "comprar", "vender",
