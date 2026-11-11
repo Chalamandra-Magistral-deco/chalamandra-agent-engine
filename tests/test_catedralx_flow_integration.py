@@ -438,7 +438,7 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
         task = task_bus.get_next_task()
         assert task is not None
         candidate = worker_loop.process_task(task)
-        assert candidate["status"] == "candidate"
+        assert candidate["status"] == "candidate", candidate["summary"]
         assert candidate["business_cycle_id"] == cycle_id
         assert candidate["result_id"] == candidate["candidate_id"]
         assert candidate["orders_created"] is False
