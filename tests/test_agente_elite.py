@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import agente_elite as elite
+from tools import agente_elite as elite
 
 
 def test_disk_usage_returns_real_read_only_metrics():
@@ -102,7 +102,7 @@ def test_module_import_does_not_require_vm_repositories_directory(tmp_path):
     env = os.environ.copy()
     env["CHALAMANDRA_REPOS_ROOT"] = str(missing_repos)
     result = subprocess.run(
-        [sys.executable, "-c", "import agente_elite; print('import-ok')"],
+        [sys.executable, "-c", "import tools.agente_elite; print('import-ok')"],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,

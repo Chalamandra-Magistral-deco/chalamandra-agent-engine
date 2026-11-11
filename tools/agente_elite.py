@@ -26,7 +26,7 @@ MAX_TURNS = 4
 REPOS_ROOT = Path(
     os.getenv("CHALAMANDRA_REPOS_ROOT")
     or os.getenv("CHALAMANDRA_REPOS_DIR")
-    or Path(__file__).resolve().parent.parent
+    or Path(__file__).resolve().parents[2]
 ).expanduser().resolve()
 
 
