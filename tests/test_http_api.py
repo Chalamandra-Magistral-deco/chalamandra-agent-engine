@@ -1058,9 +1058,9 @@ def test_v1_jobs_preserves_incomplete_governance_for_catedralx_decision_result(l
         "minimum_resilience": 0.8,
     }
     payload["central_dimensions_bp"] = {
+        "viability_bp": 9000,
         "human_value_bp": 9000,
         "distribution_bp": 9000,
-        "reinvestment_surplus": "1.0",
         "resilience_bp": 9000,
     }
     status, body = request(
