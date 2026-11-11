@@ -11,6 +11,7 @@ Motor Python de agentes y herramientas de Chalamandra Magistral. Es una bibliote
 - `dynamics/`: simulación de dos estados con retardo, análisis de trayectorias, estabilidad y barridos.
 - `telemetry/`: trazas y estadísticas de respuesta.
 - `security/`: cliente de Azure Key Vault.
+- `tools/`: utilidades auxiliares de inspección; `agente_elite.py` es de solo lectura y no forma parte de la imagen de producción.
 - `tests/`: pruebas unitarias e integración simulada.
 
 ## Agentes especializados
