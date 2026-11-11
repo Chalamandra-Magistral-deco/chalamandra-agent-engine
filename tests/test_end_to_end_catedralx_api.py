@@ -252,7 +252,6 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         distribution_store,
         subscription_store,
         task_bus,
-        trace_store,
         webhook_dispatcher,
         worker_loop,
     )
