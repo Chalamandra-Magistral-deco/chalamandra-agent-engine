@@ -1,11 +1,11 @@
 services:
   api:
-    image: agents-api:candidate-v4.2
+    image: ${AGENTS_API_IMAGE:-agents-api:candidate-v4.2}
     build:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: catedralx:v4.2
+        CATEDRALX_BASE_IMAGE: ${CATEDRALX_BASE_IMAGE:-catedralx:v4.2}
         AGENTS_REVISION: ${AGENTS_REVISION:-unknown}
         AGENTS_CODE_DIRTY: ${AGENTS_CODE_DIRTY:-unknown}
         CATEDRALX_REVISION: ${CATEDRALX_REVISION:-unknown}
@@ -15,12 +15,11 @@ services:
       - "127.0.0.1:8766:8766"
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
-      - /home/azureuser/.local/state/chalamandra/catedralx:/home/chalamandra/.local/state/chalamandra/catedralx
+      - catedralx_runtime_state:/home/chalamandra/.local/state/chalamandra/catedralx
     env_file:
       - config/.env
     environment:
       CATEDRALX_PATH: /app/CatedralX
-      CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST: "10.0.0.4,mock-webhook"
       PYTHONPATH: /app
       CHALAMANDRA_API_MAX_CONCURRENCY: "64"
     healthcheck:
@@ -33,12 +32,12 @@ services:
     networks: [agents_net]
 
   worker:
-    image: agents-worker:worker-update-20261107
+    image: ${AGENTS_WORKER_IMAGE:-agents-worker:worker-update-20261107}
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
       args:
-        AGENTS_BASE_IMAGE: agents-api:candidate-v4.2
+        AGENTS_BASE_IMAGE: ${AGENTS_API_IMAGE:-agents-api:candidate-v4.2}
     container_name: agents-worker
     env_file:
       - config/worker.env
@@ -50,7 +49,7 @@ services:
       CHALAMANDRA_WORKER_POLL_INTERVAL: "0.2"
     volumes:
       - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
-      - /home/azureuser/.local/state/chalamandra/catedralx:/home/chalamandra/.local/state/chalamandra/catedralx
+      - catedralx_runtime_state:/home/chalamandra/.local/state/chalamandra/catedralx
     depends_on:
       api:
         condition: service_healthy
@@ -60,8 +59,9 @@ services:
 
 volumes:
   agents_runtime_state:
-    external: true
     name: agents_agents_runtime_state
+  catedralx_runtime_state:
+    name: agents_catedralx_runtime_state
 
 networks:
   agents_net:
