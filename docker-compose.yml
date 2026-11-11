@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile
       args:
-        CATEDRALX_BASE_IMAGE: ${CATEDRALX_BASE_IMAGE:-catedralx:v4.2}
+        CATEDRALX_BASE_IMAGE: ${CATEDRALX_BASE_IMAGE:-catedralx:v1.0-canonico}
         AGENTS_REVISION: ${AGENTS_REVISION:-unknown}
         AGENTS_CODE_DIRTY: ${AGENTS_CODE_DIRTY:-unknown}
         CATEDRALX_REVISION: ${CATEDRALX_REVISION:-unknown}
