@@ -93,6 +93,10 @@ def _run_catedralx(payload: dict) -> dict:
     if not math.isfinite(current_price) or current_price <= 0:
         return {"status": "BLOCKED", "reason": "invalid_current_price"}
 
+    trace_id = payload.get("trace_id")
+    if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
+        return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
+
     snapshot = {
         "PERCEIVE": {
             "historial_precios": normalized_prices,
@@ -138,12 +142,8 @@ def _run_catedralx(payload: dict) -> dict:
     )
     env = {k: v for k, v in os.environ.items() if k in _ALLOWED}
     env["CATEDRALX_SNAPSHOT_PATH"] = temp_path
-    # Propagate W3C trace identity through the subprocess without changing the market snapshot schema.
-    import re
-    trace_id = payload.get("trace_id")
-    env.pop("CATEDRALX_TRACE_ID", None)
-    if isinstance(trace_id, str) and re.fullmatch(r"[0-9a-f]{32}", trace_id) and trace_id != "0" * 32:
-        env["CATEDRALX_TRACE_ID"] = trace_id
+    # Preserve the exact W3C trace identity across the process boundary.
+    env["CATEDRALX_TRACE_ID"] = trace_id
     # Use the worker's venv; do not fall back to a system Python without dependencies.
     env["CATEDRALX_PYTHON"] = sys.executable
 
@@ -185,7 +185,7 @@ def _run_catedralx(payload: dict) -> dict:
             }
         required = {
             "result_id", "status", "engine", "decision", "evidence", "assumptions",
-            "risks", "provenance", "trace_id", "evaluation_hash", "analysis_only",
+            "risks", "provenance", "trace_id", "evaluation_hash", "evaluation_gate", "analysis_only",
             "orders_created", "orders_executed",
         }
         if not required.issubset(decision):
@@ -201,11 +201,17 @@ def _run_catedralx(payload: dict) -> dict:
             or decision.get("status") not in {
                 "ACCEPTED", "UNCERTAIN", "REJECTED", "BLOCKED_MISSING_INPUT"
             }
+            or decision.get("evaluation_gate") not in {
+                "ACCEPTED", "REJECTED", "BLOCKED_EVIDENCE",
+                "BLOCKED_REINVERSION", "BLOCKED_UNCERTAINTY", "BLOCKED_DEFICIT",
+            }
+            or (decision.get("status") == "ACCEPTED") != (decision.get("evaluation_gate") == "ACCEPTED")
+            or decision.get("trace_id") != trace_id
             or decision.get("analysis_only") is not True
             or decision.get("orders_created") is not False
             or decision.get("orders_executed") is not False
         ):
-            return {"status": "BLOCKED", "reason": "decision_result_contract_invalid"}
+            return {"status": "BLOCKED", "reason": "decision_result_contract_invalid_or_trace_mismatch"}
         if result.returncode != 0:
             return {
                 "status": "BLOCKED",
