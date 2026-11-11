@@ -637,6 +637,7 @@ def test_distribution_dispatches_only_verified_acceptance_with_w3c_parent(local_
 
     with patch.object(candidate_store, "get_candidate", return_value=candidate), \
          patch.object(acceptance_store, "get_acceptance", return_value=acceptance), \
+         patch("api.task_bus.get_result_task_statuses", return_value=[{"task_id": "task-1", "status": "accepted"}]), \
          patch.object(webhook_dispatcher, "dispatch_event", return_value=1) as dispatch:
         status, body = request(
             port, "/internal/v1/distributions", method="POST", payload=payload,
@@ -708,6 +709,10 @@ def test_accepted_distribution_posts_to_local_sink_with_w3c_child_span(
         }],
     }
     candidate_store.save_candidate(candidate)
+    monkeypatch.setattr(
+        "api.task_bus.get_result_task_statuses",
+        lambda _: [{"task_id": "task-accepted", "status": "accepted"}],
+    )
     decision = {
         "decision_id": str(uuid.uuid4()),
         "candidate_id": candidate_id,
