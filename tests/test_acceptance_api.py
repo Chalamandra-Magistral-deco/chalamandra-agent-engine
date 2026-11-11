@@ -73,6 +73,7 @@ def sign_test_decision(payload):
 @pytest.fixture
 def api_server(monkeypatch):
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", TEST_JWT_SECRET)
     # The API gets only the public key; remove any private signing seeds/secrets.
     monkeypatch.setenv(
         "CHALAMANDRA_VERIFIER_PUBLIC_KEY",
@@ -153,8 +154,6 @@ def test_get_result_blocked_with_rejection(api_server):
     assert body["error"] == "result_not_accepted"
 
 
-@patch("api.candidate_store.get_candidate")
-@patch("api.candidate_store.compute_evidence_digest")
 def test_internal_distribution_blocks_when_taskbus_has_not_reconciled_acceptance(api_server):
     candidate = {
         "candidate_id": "test-123", "status": "candidate",
@@ -221,6 +220,8 @@ def test_rejected_acceptance_closes_taskbus_without_distribution(
     dispatch.assert_not_called()
 
 
+@patch("api.candidate_store.get_candidate")
+@patch("api.candidate_store.compute_evidence_digest")
 def test_acceptance_blocks_distribution_until_task_state_is_accepted(
     mock_digest, mock_get_candidate, api_server, tmp_path
 ):
