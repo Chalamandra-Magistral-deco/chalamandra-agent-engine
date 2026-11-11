@@ -320,7 +320,7 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     api_thread.start()
     base_url = f"http://127.0.0.1:{api.server_address[1]}"
 
-    trace_id = "a1234567890abcdef1234567890abcdef"
+    trace_id = "1234567890abcdef1234567890abcdef"
     traceparent = f"00-{trace_id}-1234567890abcdef-01"
     try:
         observed_at = datetime.now(timezone.utc).isoformat()
