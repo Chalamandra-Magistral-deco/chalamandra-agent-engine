@@ -79,6 +79,35 @@ def test_rejects_invalid_prices(bad_price: float) -> None:
     assert result["orders_executed"] is False
 
 
+@pytest.mark.parametrize("bad_trace_id", ["", "A" * 32, "0" * 32, "invalid"])
+def test_rejects_invalid_explicit_trace_id_without_generating_replacement(
+    bad_trace_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
+    monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
+    monkeypatch.setattr(
+        bridge,
+        "_resolve_state_path",
+        lambda: tmp_path / "state" / "hormonas.json",
+    )
+    captured: dict = {}
+    fake = _fake_module(captured)
+    monkeypatch.setattr(bridge, "_load_catedralx_module", lambda _: fake)
+
+    result = bridge.catedralx_reasoning_tool(
+        historical_prices=[100.0 + index for index in range(30)],
+        trace_id=bad_trace_id,
+    )
+
+    assert result["status"] == "error"
+    assert "trace_id explícito inválido" in result["error"]
+    assert "trace_id" not in result
+
+
 def test_state_file_must_be_outside_source_checkout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
