@@ -29,8 +29,8 @@ _DYNAMIC_REQUIRED = {
     "signal_count", "optimal_signal_count", "exposure", "max_exposure",
     "resilience", "minimum_resilience",
 }
-_CENTRAL_REQUIRED = {
-    "human_value_bp", "distribution_bp", "reinvestment_surplus",
+_CENTRAL_ALLOWED = {
+    "viability_bp", "human_value_bp", "distribution_bp",
     "resilience_bp", "evidence_bp",
 }
 _NUMERIC_DYNAMIC = _DYNAMIC_REQUIRED - {"signal_count", "optimal_signal_count"}
@@ -163,12 +163,13 @@ def validate_task_contract(objective: str, payload: Any) -> str | None:
         if central is not None and not isinstance(central, dict):
             return "central_dimensions_bp_must_be_object"
         if isinstance(central, dict):
-            invalid_central = []
-            for key in (_CENTRAL_REQUIRED - {"reinvestment_surplus"}).intersection(central):
-                if type(central[key]) is not int or not 0 <= central[key] <= 10000:
-                    invalid_central.append(key)
-            if "reinvestment_surplus" in central and not _finite_positive(central["reinvestment_surplus"]):
-                invalid_central.append("reinvestment_surplus")
+            noncanonical = sorted(set(central) - _CENTRAL_ALLOWED)
+            if noncanonical:
+                return "central_dimensions_bp_noncanonical_fields:" + ",".join(noncanonical)
+            invalid_central = [
+                key for key, value in central.items()
+                if type(value) is not int or not 0 <= value <= 10000
+            ]
             if invalid_central:
                 return "central_dimensions_bp_invalid_fields:" + ",".join(sorted(invalid_central))
         return None
