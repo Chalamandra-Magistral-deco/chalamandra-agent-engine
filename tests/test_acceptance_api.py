@@ -193,6 +193,20 @@ def test_internal_distribution_requires_all_linked_tasks_accepted(api_server):
     dispatch.assert_called_once()
 
 
+
+def test_distribution_rejects_conflicting_candidate_and_result_ids(api_server):
+    with patch("api.candidate_store.get_candidate") as get_candidate:
+        status, body = _post(
+            f"{api_server}/internal/v1/distributions",
+            {"candidate_id": "candidate-a", "result_id": "result-b"},
+            headers={"Authorization": f"Bearer {make_jwt('results:publish', 'catedralx-service')}"},
+        )
+    assert status == 400
+    assert body["error"] == "distribution_identity_mismatch"
+    get_candidate.assert_not_called()
+
+
+
 def test_rejected_acceptance_closes_taskbus_without_distribution(
     api_server, tmp_path
 ):
