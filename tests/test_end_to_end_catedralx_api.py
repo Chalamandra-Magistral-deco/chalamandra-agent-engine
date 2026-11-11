@@ -232,3 +232,253 @@ def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "rejected"])
+def test_catedralx_agents_verification_and_distribution_full_lifecycle(
+    outcome, tmp_path, monkeypatch
+):
+    """Exercise request -> CatedralX -> candidate -> independent verifier -> delivery.
+
+    All state is isolated under tmp_path. The only outbound delivery is to a local
+    HTTP receiver explicitly allowlisted for this test; model calls remain disabled.
+    """
+    pytest.importorskip("numpy")
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from api import (
+        acceptance_store,
+        candidate_store,
+        distribution_store,
+        subscription_store,
+        task_bus,
+        trace_store,
+        webhook_dispatcher,
+        worker_loop,
+    )
+    from api.server import create_server
+
+    jwt_secret = "integration-test-jwt-secret-32-bytes-minimum"
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv("CHALAMANDRA_CATEDRALX_JWT_SECRET", jwt_secret)
+    monkeypatch.setenv(
+        "CHALAMANDRA_VERIFIER_PUBLIC_KEY", TEST_VERIFIER_KEY.verify_key.encode().hex()
+    )
+    monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", "isolated-test-verifier")
+    monkeypatch.setenv(
+        "CHALAMANDRA_WEBHOOK_SECRET", "integration-test-webhook-secret-32-bytes-minimum"
+    )
+    monkeypatch.setenv("CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST", "127.0.0.1")
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
+    monkeypatch.setenv("CATEDRALX_STATE_PATH", str(tmp_path / "catedralx" / "hormonas.json"))
+    monkeypatch.setenv("CATEDRALX_FEEDBACK_PATH", str(tmp_path / "catedralx" / "feedback.jsonl"))
+    monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", str(tmp_path / "catedralx" / "results.jsonl"))
+    for secret_name in (
+        "CHALAMANDRA_ED25519_SEED",
+        "CHALAMANDRA_VERIFIER_SECRET",
+        "CHALAMANDRA_HMAC_SECRET",
+    ):
+        monkeypatch.delenv(secret_name, raising=False)
+
+    state_dir = tmp_path / "agents-state"
+    for module in (
+        task_bus,
+        candidate_store,
+        acceptance_store,
+        subscription_store,
+        distribution_store,
+        webhook_dispatcher,
+        trace_store,
+    ):
+        monkeypatch.setattr(module, "_state_dir", lambda state_dir=state_dir: state_dir)
+
+    received = []
+
+    class LocalReceiver(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            received.append({"payload": payload, "headers": dict(self.headers.items())})
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, _format, *_args):
+            return
+
+    receiver = ThreadingHTTPServer(("127.0.0.1", 0), LocalReceiver)
+    receiver_thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+    receiver_thread.start()
+    receiver_url = f"http://127.0.0.1:{receiver.server_address[1]}/events"
+    subscription = subscription_store.create_subscription(
+        receiver_url, ["result.accepted"]
+    )
+    assert subscription["status"] == "enabled"
+
+    api = create_server("127.0.0.1", 0)
+    api_thread = threading.Thread(target=api.serve_forever, daemon=True)
+    api_thread.start()
+    base_url = f"http://127.0.0.1:{api.server_address[1]}"
+
+    trace_id = "a1234567890abcdef1234567890abcdef"
+    traceparent = f"00-{trace_id}-1234567890abcdef-01"
+    try:
+        observed_at = datetime.now(timezone.utc).isoformat()
+        prices = [100.0 + index * 0.01 for index in range(59)]
+        from conftest import sign_market_payload
+
+        payload = sign_market_payload({
+            "historical_prices": prices,
+            "current_price": prices[-1],
+            "observed_at": observed_at,
+            "source": "isolated_full_lifecycle_fixture",
+            "dynamic_constraints": {
+                "reinvestment_surplus": 1.0,
+                "entropy_rate": 0.1,
+                "entropy_time_scale": 1.0,
+                "loop_gain": 0.5,
+                "signal_count": 2,
+                "optimal_signal_count": 3,
+                "exposure": 0.1,
+                "max_exposure": 0.5,
+                "resilience": 0.9,
+                "minimum_resilience": 0.8,
+            },
+            "central_dimensions_bp": {
+                "viability_bp": 9000,
+                "human_value_bp": 9000,
+                "distribution_bp": 9000,
+                "resilience_bp": 9000,
+                "evidence_bp": 9000,
+            },
+        })
+        request_contract = {
+            "objective": "catedralx_economic_evaluation",
+            "payload": payload,
+            "permissions": {"allowed_tools": [], "side_effects": "none"},
+            "success_criteria": [
+                "Produce a traced, analysis-only CatedralX DecisionResult."
+            ],
+        }
+        status, queued = _http_json(
+            f"{base_url}/v1/request",
+            method="POST",
+            token=_make_jwt(jwt_secret, "jobs:write"),
+            payload=request_contract,
+            extra_headers={
+                "Idempotency-Key": f"full-lifecycle-{outcome}-001",
+                "traceparent": traceparent,
+            },
+        )
+        assert status == 202
+        assert queued["trace_id"] == trace_id
+
+        task = task_bus.get_next_task()
+        assert task is not None
+        assert task["run_id"] == queued["run_id"]
+        candidate_result = worker_loop.process_task(task)
+        assert candidate_result["status"] == "candidate"
+        assert candidate_result["engine"] == "CatedralX"
+        assert candidate_result["decision_result"]["status"] == "ACCEPTED"
+        assert candidate_result["trace_id"] == trace_id
+        assert candidate_result["decision_result"]["trace_id"] == trace_id
+
+        candidate_id = candidate_result["candidate_id"]
+        persisted = candidate_store.get_candidate(candidate_id)
+        assert persisted is not None
+        assert persisted["evidence"]
+        assert persisted["decision_result"]["evaluation_hash"]
+        assert acceptance_store.get_acceptance(candidate_id) is None
+
+        # The result is not readable as delivered before independent acceptance.
+        status, pending = _http_json(
+            f"{base_url}/v1/results/{candidate_id}",
+            token=_make_jwt(jwt_secret, "results:read"),
+        )
+        assert status == 202
+        assert pending["status"] == "pending_verification"
+        assert not distribution_store._events_file().exists()
+        assert received == []
+
+        decision = {
+            "decision_id": f"full-lifecycle-{outcome}-{candidate_id}",
+            "candidate_id": candidate_id,
+            "outcome": outcome,
+            "criteria_checked": [
+                "canonical_decision_result",
+                "evidence_digest",
+                "trace_ownership",
+                "traceability",
+            ],
+            "reasons": [] if outcome == "accepted" else ["negative-path integration fixture"],
+            "missing_evidence": [],
+            "verifier_id": "isolated-test-verifier",
+            "evidence_digest": candidate_store.compute_evidence_digest(persisted),
+            "decided_at": datetime.now(timezone.utc).isoformat(),
+            "trace_id": trace_id,
+        }
+        decision["signature"] = _sign_decision(decision)
+        status, acceptance = _http_json(
+            f"{base_url}/v1/acceptance",
+            method="POST",
+            token=_make_jwt(jwt_secret, "acceptance:write"),
+            payload=decision,
+        )
+        assert status == 201
+        assert acceptance["outcome"] == outcome
+
+        task_status = task_bus.get_task_status(task["task_id"])
+        assert task_status["status"] == ("accepted" if outcome == "accepted" else "rejected")
+        stored_acceptance = acceptance_store.get_acceptance(candidate_id)
+        assert stored_acceptance is not None
+        assert stored_acceptance["outcome"] == outcome
+        assert stored_acceptance["trace_id"] == trace_id
+
+        if outcome == "accepted":
+            assert len(received) == 1
+            event = received[0]["payload"]
+            headers = received[0]["headers"]
+            assert event["event_type"] == "result.accepted"
+            assert event["result_id"] == candidate_id
+            assert event["trace_id"] == trace_id
+            assert headers["X-Trace-Id"] == trace_id
+            assert len(headers["X-Chalamandra-Signature"]) == 64
+            child_parent = headers["traceparent"].split("-")
+            assert child_parent[1] == trace_id
+            dispatch_records = distribution_store._read_all(
+                distribution_store._events_file()
+            )
+            assert dispatch_records[-1]["status"] == "dispatched"
+            assert dispatch_records[-1]["delivered_count"] == 1
+
+            status, delivered = _http_json(
+                f"{base_url}/v1/results/{candidate_id}",
+                token=_make_jwt(jwt_secret, "results:read"),
+            )
+            assert status == 200
+            assert delivered["delivery_status"] == "accepted"
+            assert delivered["acceptance"]["outcome"] == "accepted"
+
+            status, run = _http_json(
+                f"{base_url}/internal/v1/orchestration/runs/{queued['run_id']}",
+                token=_make_jwt(jwt_secret, "orchestration:read"),
+            )
+            assert status == 200
+            assert run["status"] == "accepted"
+            assert run["trace_id"] == trace_id
+        else:
+            assert received == []
+            status, blocked = _http_json(
+                f"{base_url}/v1/results/{candidate_id}",
+                token=_make_jwt(jwt_secret, "results:read"),
+            )
+            assert status == 403
+            assert blocked["error"] == "result_not_accepted"
+            assert not distribution_store._events_file().exists()
+    finally:
+        api.shutdown()
+        api.server_close()
+        api_thread.join(timeout=2)
+        receiver.shutdown()
+        receiver.server_close()
+        receiver_thread.join(timeout=2)
