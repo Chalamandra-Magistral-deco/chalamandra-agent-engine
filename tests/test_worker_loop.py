@@ -28,9 +28,9 @@ def _economic_evaluation_payload():
             "minimum_resilience": 0.8,
         },
         "central_dimensions_bp": {
+            "viability_bp": 9000,
             "human_value_bp": 9000,
             "distribution_bp": 9000,
-            "reinvestment_surplus": "1.0",
             "resilience_bp": 9000,
             "evidence_bp": 9000,
         },
@@ -558,7 +558,9 @@ def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonc
     import uuid
     from nacl.signing import SigningKey
 
-    catedralx_root = Path(__file__).resolve().parents[2] / "CatedralX"
+    catedralx_root = Path(
+        os.getenv("CATEDRALX_PATH") or (Path(__file__).resolve().parents[1] / "CatedralX")
+    ).resolve()
     monkeypatch.setenv("CATEDRALX_PATH", str(catedralx_root))
     monkeypatch.setenv("CATEDRALX_STATE_DIR", str(tmp_path / "catedralx-state"))
     signing_key = SigningKey.generate()
