@@ -1,6 +1,7 @@
 """Tests for durable webhook dispatch using the pinned transport."""
 import json
 import re
+import pytest
 from unittest.mock import Mock
 
 from api import subscription_store
@@ -113,3 +114,13 @@ def test_missing_or_short_webhook_secret_fails_closed(monkeypatch):
         assert "at least 32 bytes" in str(error)
     else:
         raise AssertionError("short secret must fail closed")
+
+def test_subscription_store_rejects_blocked_event_type(monkeypatch, tmp_path):
+    monkeypatch.setattr(subscription_store, "resolve_safe_url", lambda _url: TARGET)
+    monkeypatch.setattr(subscription_store, "_subs_file", lambda: tmp_path / "subscriptions.jsonl")
+
+    with pytest.raises(ValueError, match="event_types inválidos"):
+        subscription_store.create_subscription(
+            "https://example.com/hook",
+            ["result.blocked"],
+        )
