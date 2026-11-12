@@ -585,7 +585,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 or len(event_types) > 8
                 or any(not isinstance(item, str) for item in event_types)
                 or len(set(event_types)) != len(event_types)
-                or any(item not in {"result.accepted", "result.blocked"} for item in event_types)
+                or any(item != "result.accepted" for item in event_types)
             ):
                 self._send_json(HTTPStatus.BAD_REQUEST, {
                     "error": "invalid_subscription",
