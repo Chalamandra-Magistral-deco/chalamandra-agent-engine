@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown -R chalamandra:chalamandra /home/chalamandra
 COPY pyproject.toml ./
 COPY api/ ./api/
+COPY scripts/ ./scripts/
 COPY core/ ./core/
 COPY pipeline/ ./pipeline/
 COPY adapters/ ./adapters/
