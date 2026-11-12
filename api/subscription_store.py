@@ -159,7 +159,7 @@ def create_subscription(endpoint_url: str, event_types: list[str]) -> dict:
             "o un host privado explícitamente autorizado"
         )
 
-    allowed_event_types = {"result.accepted", "result.blocked"}
+    allowed_event_types = {"result.accepted"}
     if (
         not event_types
         or len(event_types) > 8
