@@ -1115,3 +1115,22 @@ def test_general_request_cannot_claim_catedralx_human_authorization(local_api):
     )
     assert status == 403
     assert body["error"] == "economic_proposal_requires_authenticated_catedralx_service"
+
+
+def test_create_subscription_rejects_blocked_event_type(local_api):
+    port, _ = local_api
+    payload = {
+        "endpoint_url": "https://webhook.example.test/callback",
+        "event_types": ["result.blocked"],
+    }
+    status, body = request(
+        port,
+        "/v1/subscriptions",
+        method="POST",
+        payload=payload,
+        headers={"Authorization": f"Bearer {make_jwt(scopes='subscriptions:write')}"},
+    )
+    assert status == 400
+    assert body["error"] == "invalid_subscription"
+    assert body["allowed_event_types"] == ["result.accepted"]
+
