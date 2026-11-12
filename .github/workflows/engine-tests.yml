@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: b71c6c30743e22d749757f873fd7dc64b17a414f
+          ref: 324ee6822d324453d3cb28b5c835549c339757c8
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
