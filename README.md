@@ -159,6 +159,19 @@ docker compose config --quiet
 docker compose up -d
 ```
 
+Las operaciones FEX se ejecutan de forma puntual en el perfil `lifecycle`; no dependen de systemd, cron ni de rutas de una VM. El servicio normal API/Worker no las lanza automáticamente:
+
+```bash
+# Solo despacha ciclos que ya tengan measure → evaluate → propose → authorize.
+docker compose --profile lifecycle run --rm cycle-dispatch
+
+# Después de que el verificador independiente registre la aceptación/rechazo,
+# verifica la firma y el digest y devuelve verify → feedback al ledger FEX.
+docker compose --profile lifecycle run --rm feedback-reconcile
+```
+
+`cycle-dispatch` registra `run_id`, `task_id` y `trace_id`; el estado del run se consulta mediante `GET /internal/v1/orchestration/runs/{run_id}` con scope `orchestration:read`. El reconciliador de feedback no firma decisiones ni acepta candidatos: consume únicamente registros ya firmados y persistidos por Agents.
+
 No uses etiquetas históricas como prueba de procedencia: registra los SHA de Agents y CatedralX de las imágenes elegidas y verifica sus etiquetas OCI antes de habilitar el servicio.
 
 ## Verificación
