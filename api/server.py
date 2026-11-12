@@ -590,7 +590,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {
                     "error": "invalid_subscription",
                     "required_fields": ["endpoint_url", "event_types"],
-                    "allowed_event_types": ["result.accepted", "result.blocked"],
+                    "allowed_event_types": ["result.accepted"],
                 })
                 return
             try:
