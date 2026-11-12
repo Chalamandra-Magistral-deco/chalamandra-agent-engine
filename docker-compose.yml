@@ -57,6 +57,45 @@ services:
     restart: unless-stopped
     networks: [agents_net]
 
+  # One-shot operations: invoked explicitly, never started by normal "compose up".
+  cycle-dispatch:
+    image: ${AGENTS_API_IMAGE:-agents-api:candidate-v4.2}
+    profiles: ["lifecycle"]
+    command: ["python", "/app/CatedralX/elite/bin/dispatch_authorized_cycles.py"]
+    env_file:
+      - config/.env
+    environment:
+      CATEDRALX_PATH: /app/CatedralX
+      PYTHONPATH: /app
+      CHALAMANDRA_API_URL: http://api:8766
+      CHALAMANDRA_API_ALLOW_PRIVATE_HTTP: "true"
+    volumes:
+      - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
+      - catedralx_runtime_state:/home/chalamandra/.local/state/chalamandra/catedralx
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [agents_net]
+    restart: "no"
+
+  feedback-reconcile:
+    image: ${AGENTS_API_IMAGE:-agents-api:candidate-v4.2}
+    profiles: ["lifecycle"]
+    command: ["python", "scripts/reconcile_catedralx_feedback.py"]
+    env_file:
+      - config/.env
+    environment:
+      CATEDRALX_PATH: /app/CatedralX
+      PYTHONPATH: /app
+    volumes:
+      - agents_runtime_state:/home/chalamandra/.local/state/chalamandra
+      - catedralx_runtime_state:/home/chalamandra/.local/state/chalamandra/catedralx
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [agents_net]
+    restart: "no"
+
 volumes:
   agents_runtime_state:
     name: agents_agents_runtime_state
