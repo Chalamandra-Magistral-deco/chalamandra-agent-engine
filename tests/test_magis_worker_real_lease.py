@@ -1,5 +1,4 @@
 """Integration tests for MAGIS worker execution with the real SQLite TaskBus."""
-import json
 
 import pytest
 
