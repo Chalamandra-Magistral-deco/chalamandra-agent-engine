@@ -408,6 +408,60 @@ def test_general_task_stays_blocked_when_only_magis_gate_is_enabled(monkeypatch)
     assert completion_calls[0]["candidate_result"]["status"] == "blocked"
 
 
+def test_magis_task_uses_product_scoped_gate_without_enabling_general_tasks(monkeypatch):
+    saved_candidates = []
+    completions = []
+    captured = {}
+
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    monkeypatch.setenv("CHALAMANDRA_MAGIS_EXECUTION_ENABLED", "true")
+
+    class FakeMaster:
+        def __init__(self):
+            pass
+
+        async def execute_task(self, objective, *, allowed_tools=None):
+            captured["objective"] = objective
+            captured["allowed_tools"] = allowed_tools
+            return {"summary": "MAGIS product-scoped candidate"}
+
+    monkeypatch.setattr(worker_loop, "Master", FakeMaster)
+    monkeypatch.setattr(
+        worker_loop.candidate_store,
+        "save_candidate",
+        lambda candidate: saved_candidates.append(candidate),
+    )
+    monkeypatch.setattr(
+        worker_loop.task_bus,
+        "mark_task_completed",
+        lambda task_id, candidate_result, result_id=None: completions.append(
+            {"task_id": task_id, "candidate_result": candidate_result, "result_id": result_id}
+        ),
+    )
+
+    task = {
+        "task_id": "magis-product-scoped-execution",
+        "product_code": "magis",
+        "objective": "magis_text_analysis",
+        "payload": json.dumps({
+            "operation_id": "f7e2cf4f-0bf2-4f56-a0da-62c7fc95e16f",
+            "prompt": "Analyze only this synthetic test input.",
+            "context": "test context",
+        }),
+        "success_criteria": json.dumps(["Return a structured analysis"]),
+        "required_tools": "[]",
+        "trace_id": "trace-magis-product-scoped-execution",
+    }
+
+    result = worker_loop.process_task(task)
+
+    assert result["status"] == "candidate"
+    assert result["summary"] == "MAGIS product-scoped candidate"
+    assert "magis_text_analysis" in captured["objective"]
+    assert captured["allowed_tools"] == []
+    assert len(saved_candidates) == 1
+    assert len(completions) == 1
+
 
 def test_general_task_passes_payload_and_success_criteria_to_master(monkeypatch):
     saved_candidates = []
