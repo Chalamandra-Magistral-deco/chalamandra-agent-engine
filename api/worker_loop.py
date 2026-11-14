@@ -936,6 +936,8 @@ def main():
     if not 1 <= process_count <= 16:
         raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe estar entre 1 y 16")
 
+    candidate_store.require_integrity_key()
+
     if process_count == 1:
         stop_event = threading.Event()
 
