@@ -40,7 +40,6 @@ def isolated_home(tmp_path, monkeypatch):
     # tmp_path: el ledger vive en tmp_path/candidates.jsonl, no bajo HOME.
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("CHALAMANDRA_STATE_DIR", raising=False)
-    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
     return tmp_path
 
 
@@ -59,7 +58,7 @@ def test_save_attaches_full_record_digest(isolated_home):
     candidate_store.save_candidate(_candidate())
     saved = candidate_store.get_candidate("integrity-candidate-1")
     assert saved is not None
-    assert saved["record_digest_alg"] == "sha256"
+    assert saved["record_digest_alg"] == "hmac-sha256"
     assert len(saved["record_digest"]) == 64
     assert saved["economic_assessment"]["revenue_total"] == 24000.0
 
@@ -91,15 +90,14 @@ def test_tampered_evidence_is_rejected_on_read(isolated_home):
         candidate_store.get_candidate("integrity-candidate-1")
 
 
-def test_legacy_record_without_digest_still_reads(isolated_home):
+def test_legacy_record_without_digest_is_rejected(isolated_home):
     path = _ledger_path(isolated_home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(_candidate(), ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    saved = candidate_store.get_candidate("integrity-candidate-1")
-    assert saved is not None
-    assert "record_digest" not in saved
+    with pytest.raises(ValueError, match="record_digest"):
+        candidate_store.get_candidate("integrity-candidate-1")
 
 
 def test_identical_retry_does_not_duplicate(isolated_home):
@@ -110,7 +108,7 @@ def test_identical_retry_does_not_duplicate(isolated_home):
 
 
 def test_hmac_digest_when_key_configured(isolated_home, monkeypatch):
-    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "test-key-for-integrity-only")
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "b6" * 32)
     candidate_store.save_candidate(_candidate())
     saved = candidate_store.get_candidate("integrity-candidate-1")
     assert saved is not None
@@ -118,9 +116,28 @@ def test_hmac_digest_when_key_configured(isolated_home, monkeypatch):
 
 
 def test_hmac_digest_rejects_wrong_key_on_read(isolated_home, monkeypatch):
-    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "correct-key")
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "c7" * 32)
     candidate_store.save_candidate(_candidate())
-    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "wrong-key")
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "d8" * 32)
+    with pytest.raises(ValueError, match="record_digest"):
+        candidate_store.get_candidate("integrity-candidate-1")
+
+
+
+def test_missing_hmac_key_fails_closed_on_write(isolated_home, monkeypatch):
+    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="CHALAMANDRA_CANDIDATE_HMAC_KEY"):
+        candidate_store.save_candidate(_candidate())
+
+
+def test_stripping_both_digest_fields_is_rejected(isolated_home):
+    candidate_store.save_candidate(_candidate())
+
+    def strip_integrity_fields(record):
+        record.pop("record_digest", None)
+        record.pop("record_digest_alg", None)
+
+    _rewrite_ledger(isolated_home, strip_integrity_fields)
     with pytest.raises(ValueError, match="record_digest"):
         candidate_store.get_candidate("integrity-candidate-1")
 
@@ -146,7 +163,7 @@ def test_state_dir_override_moves_all_ledgers(tmp_path, monkeypatch):
 
 
 def test_hmac_digest_rejects_tamper(isolated_home, monkeypatch):
-    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "a" * 64)
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "e9" * 32)
     candidate_store.save_candidate(_candidate())
     _rewrite_ledger(isolated_home, lambda record: record.update({"summary": "TAMPERED SUMMARY"}))
     with pytest.raises(ValueError, match="record_digest"):
