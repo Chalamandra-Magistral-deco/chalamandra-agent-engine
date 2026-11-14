@@ -19,7 +19,6 @@ tasks.db-*
 .venv_DEPRECATED_*/
 
 .venv_test/
-.env
 secrets/
 config/.env
 
