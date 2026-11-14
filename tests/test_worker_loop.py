@@ -349,6 +349,13 @@ def test_catedral_repo_is_configurable_and_defaults_to_sibling_checkout(monkeypa
 
 
 
+def test_worker_startup_requires_candidate_hmac_key(monkeypatch):
+    monkeypatch.setenv("CHALAMANDRA_WORKER_PROCESSES", "1")
+    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="CHALAMANDRA_CANDIDATE_HMAC_KEY"):
+        worker_loop.main()
+
+
 def test_worker_blocks_financial_input_without_observation_metadata(monkeypatch):
     import subprocess
 
