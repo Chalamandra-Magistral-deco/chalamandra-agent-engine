@@ -1,7 +1,7 @@
 """HTTP-to-worker end-to-end coverage for the CatedralX opportunity contract.
 
 Uses the canonical CatedralX checkout supplied by CI, synthetic opportunity data,
-isolated stores, loopback HTTP only, and a signed independent rejection decision.
+isolated stores, loopback HTTP only, and signed independent acceptance/rejection decisions.
 No model calls, external tools, financial orders, or production services are used.
 """
 from __future__ import annotations
@@ -114,7 +114,8 @@ def _signed_decision(candidate: dict, outcome: str) -> dict:
         "CHALAMANDRA_ED25519_SEED": TEST_VERIFIER_SEED_HEX,
         "CHALAMANDRA_VERIFIER_ID": decision["verifier_id"],
     }
-    confirmation = f"{outcome.upper()}:{decision['candidate_id']}"
+    confirmation_action = "ACCEPT" if outcome == "accepted" else "REJECT"
+    confirmation = f"{confirmation_action}:{decision['candidate_id']}"
     signed = subprocess.run(
         [sys.executable, str(verifier_cli), "--confirm", confirmation],
         input=json.dumps(decision),
