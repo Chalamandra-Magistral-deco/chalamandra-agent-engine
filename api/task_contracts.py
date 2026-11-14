@@ -39,7 +39,7 @@ def _opportunity_payload_error(payload: dict[str, Any]) -> str | None:
     if payload.get("income_model") not in {"active", "passive", "hybrid", "investment", "asset"}:
         return "opportunity_income_model_invalid"
     if not isinstance(payload.get("currency"), str) or not re.fullmatch(r"[A-Z]{3}", payload["currency"]):
-        return "opportunity_currency_must_be_iso4217"
+        return "opportunity_currency_must_be_three_uppercase_letters"
     if type(payload.get("horizon_months")) is not int or not 1 <= payload["horizon_months"] <= 120:
         return "opportunity_horizon_months_invalid"
     trace = payload.get("trace_id")
