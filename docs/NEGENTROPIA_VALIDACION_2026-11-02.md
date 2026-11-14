@@ -1,3 +1,5 @@
+> **Registro histórico de validación — 2026-11-02.** Los hashes, ramas, conteos, contenedores y estados descritos corresponden exclusivamente a esa ejecución local. No representan HEAD de main ni estado operativo actual al 2026-11-14. La sección de pendientes no debe tratarse como una lista vigente sin volver a comprobar el código y los workflows actuales. Se conserva como evidencia histórica, no como runbook actual.
+
 # Neguentropía Elite — evidencia de validación
 
 **Fecha:** 2026-11-02

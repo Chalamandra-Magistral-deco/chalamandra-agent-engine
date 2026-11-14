@@ -1,3 +1,5 @@
+> **Alcance histórico — 2026-10-29.** Este documento registra dos ejecuciones sintéticas de aquella fecha; no describe el estado operativo actual ni demuestra producción vigente. Las referencias a tareas, estados y configuración son evidencia histórica inmutable. Para el contrato vigente, consultar `README.md`, `docs/INTEGRACION_GOVERNANCE.md` y el código actual de `api/task_contracts.py`, `api/worker_loop.py` y `api/server.py`.
+
 # Estado Fail-Closed del sistema (2026-10-29)
 
 ## Resumen
