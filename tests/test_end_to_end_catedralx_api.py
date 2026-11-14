@@ -253,7 +253,6 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         subscription_store,
         task_bus,
         webhook_dispatcher,
-        worker_loop,
     )
     from api.server import create_server
 
@@ -281,7 +280,13 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     ):
         monkeypatch.delenv(secret_name, raising=False)
 
-    state_dir = tmp_path / "agents-state"
+    # The API test process and the real worker subprocess must resolve the
+    # same persistent state directory, just as the two Compose services do
+    # through agents_runtime_state.
+    worker_home = tmp_path / "worker-home"
+    worker_home.mkdir()
+    monkeypatch.setenv("HOME", str(worker_home))
+    state_dir = worker_home / ".local" / "state" / "chalamandra" / "agents"
     for module in (
         task_bus,
         candidate_store,
@@ -319,6 +324,7 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     api_thread.start()
     base_url = f"http://127.0.0.1:{api.server_address[1]}"
 
+    worker_process = None
     trace_id = "1234567890abcdef1234567890abcdef"
     traceparent = f"00-{trace_id}-1234567890abcdef-01"
     try:
@@ -372,10 +378,39 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         assert status == 202
         assert queued["trace_id"] == trace_id
 
-        task = task_bus.get_next_task()
-        assert task is not None
+        # Run the production worker entrypoint as a separate process. It
+        # must claim the API's SQLite task through the shared state directory.
+        repo_root = Path(__file__).resolve().parents[1]
+        worker_env = os.environ.copy()
+        worker_env["PYTHONPATH"] = str(repo_root) + os.pathsep + worker_env.get("PYTHONPATH", "")
+        worker_process = subprocess.Popen(
+            [sys.executable, "-m", "api.worker_loop"],
+            cwd=repo_root,
+            env=worker_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        deadline = time.monotonic() + 60
+        task = None
+        while time.monotonic() < deadline:
+            task = task_bus.get_task_status(queued["task_id"])
+            if task and task["status"] in {"candidate", "blocked", "failed"}:
+                break
+            if worker_process.poll() is not None:
+                worker_output, _ = worker_process.communicate(timeout=2)
+                raise AssertionError(
+                    "Persistent worker exited before completing the task: "
+                    + worker_output[-4000:]
+                )
+            time.sleep(0.1)
+
+        assert task is not None, "Persistent worker did not make the task visible"
         assert task["run_id"] == queued["run_id"]
-        candidate_result = worker_loop.process_task(task)
+        assert task["status"] == "candidate", task.get("candidate_result")
+        assert worker_process.poll() is None, "Persistent worker exited after task completion"
+        candidate_result = json.loads(task["candidate_result"])
         assert candidate_result["status"] == "candidate"
         assert candidate_result["engine"] == "CatedralX"
         assert candidate_result["decision_result"]["status"] == "ACCEPTED"
@@ -383,8 +418,12 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         assert candidate_result["decision_result"]["trace_id"] == trace_id
 
         candidate_id = candidate_result["candidate_id"]
+        publication_deadline = time.monotonic() + 5
         persisted = candidate_store.get_candidate(candidate_id)
-        assert persisted is not None
+        while persisted is None and time.monotonic() < publication_deadline:
+            time.sleep(0.05)
+            persisted = candidate_store.get_candidate(candidate_id)
+        assert persisted is not None, "Worker completed the task but did not publish its candidate"
         assert persisted["evidence"]
         assert persisted["decision_result"]["evaluation_hash"]
         assert acceptance_store.get_acceptance(candidate_id) is None
@@ -475,6 +514,13 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
             assert blocked["error"] == "result_not_accepted"
             assert not distribution_store._events_file().exists()
     finally:
+        if worker_process is not None and worker_process.poll() is None:
+            worker_process.terminate()
+            try:
+                worker_process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                worker_process.kill()
+                worker_process.communicate(timeout=5)
         api.shutdown()
         api.server_close()
         api_thread.join(timeout=2)
