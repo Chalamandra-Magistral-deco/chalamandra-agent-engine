@@ -358,3 +358,55 @@ def test_opportunity_evaluation_routes_to_catedralx_and_publishes_only_candidate
     assert result["orders_executed"] is False
     assert completed[0]["candidate_result"]["status"] == "candidate"
     assert len(saved) == 1
+
+
+
+def test_real_worker_runs_canonical_catedralx_opportunity_cli(monkeypatch):
+    """Exercise Agents -> worker -> real CatedralX CLI using isolated fixture data."""
+    import os
+    from pathlib import Path
+    import pytest
+
+    catedralx_path = os.getenv("CATEDRALX_PATH")
+    if not catedralx_path or not (Path(catedralx_path) / "BIN/catedral").is_file():
+        pytest.skip("Canonical CatedralX checkout is supplied by the integration CI job.")
+
+    monkeypatch.setenv("CATEDRALX_PATH", catedralx_path)
+    monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    saved, completed = [], []
+    _patch_persistence(monkeypatch, saved, completed)
+
+    trace_id = "fedcfedcfedcfedcfedcfedcfedcfedc"
+    payload = _opportunity_payload(trace_id)
+    result = worker_loop.process_task({
+        "task_id": "opportunity-real-cli-integration",
+        "objective": "catedralx_opportunity_evaluation",
+        "payload": json.dumps(payload),
+        "trace_id": trace_id,
+    })
+
+    assert result["status"] == "candidate"
+    assert result["engine"] == "CatedralX"
+    assert result["decision_result"] is None
+    assert result["trace_id"] == trace_id
+    assert result["catedralx_trace_id"] == trace_id
+
+    assessment = result["economic_assessment"]
+    assert assessment["evaluation_domain"] == "business_opportunity"
+    assert assessment["status"] == "ANALYSIS_COMPLETE"
+    assert assessment["trace_id"] == trace_id
+    assert assessment["scenarios"]["base"]["revenue_total"] == 24000.0
+    assert assessment["scenarios"]["base"]["cost_total"] == 6000.0
+    assert assessment["financials"]["funding_gap"] == 2000.0
+    assert assessment["decision_candidate"] == "DEFER"
+    assert assessment["authorization"] == "NOT_GRANTED"
+    assert assessment["independent_acceptance_required"] is True
+    assert assessment["analysis_only"] is True
+    assert assessment["orders_created"] is False
+    assert assessment["orders_executed"] is False
+
+    assert len(saved) == 1
+    assert len(completed) == 1
+    assert saved[0]["status"] == "candidate"
+    assert completed[0]["candidate_result"]["status"] == "candidate"
+    assert completed[0]["candidate_result"]["economic_assessment"]["evaluation_hash"] == assessment["evaluation_hash"]
