@@ -16,7 +16,11 @@ from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
 from api import task_bus
-from api.task_contracts import validate_task_contract
+from api.task_contracts import (
+    CATEDRALX_ECONOMIC_EVALUATION,
+    CATEDRALX_OPPORTUNITY_EVALUATION,
+    validate_task_contract,
+)
 from api import candidate_store
 from api import trace_store
 from api.trace_parser import parse_traceparent
@@ -873,6 +877,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "detail": contract_error,
                 })
                 return
+            # Una sola identidad de traza por solicitud: en las rutas de
+            # CatedralX el trace_id del payload debe coincidir con el de
+            # la cabecera traceparent. Si difieren, la correlación se
+            # partiría (trace_id de la tarea != catedralx_trace_id) sin
+            # ningún rechazo. Fail-closed en el borde de la API.
+            if objective.strip() in {CATEDRALX_ECONOMIC_EVALUATION, CATEDRALX_OPPORTUNITY_EVALUATION}:
+                payload_trace_id = payload.get("trace_id") if isinstance(payload, dict) else None
+                if payload_trace_id is not None and payload_trace_id != self.trace_id:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "trace_id_mismatch",
+                        "detail": "payload trace_id does not match traceparent trace_id",
+                    })
+                    return
             permissions = body.get("permissions", {})
             if not isinstance(permissions, dict):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "permissions_must_be_object"})
@@ -1077,6 +1094,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "detail": contract_error,
                 })
                 return
+
+            # Una sola identidad de traza por solicitud (ver handler de
+            # /internal/v1/orchestration/runs y /v1/request): en las rutas
+            # de CatedralX el trace_id del payload debe coincidir con el
+            # de la cabecera traceparent.
+            if objective.strip() in {CATEDRALX_ECONOMIC_EVALUATION, CATEDRALX_OPPORTUNITY_EVALUATION}:
+                payload_trace_id = payload.get("trace_id") if isinstance(payload, dict) else None
+                if payload_trace_id is not None and payload_trace_id != self.trace_id:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "trace_id_mismatch",
+                        "detail": "payload trace_id does not match traceparent trace_id",
+                    })
+                    return
 
             # Encolar en el TaskBus unificado únicamente tras validar el tipo y payload.
             trace_id = self.trace_id

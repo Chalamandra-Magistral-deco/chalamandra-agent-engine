@@ -1176,3 +1176,74 @@ def test_create_subscription_rejects_blocked_event_type(local_api):
     assert body["error"] == "invalid_subscription"
     assert body["allowed_event_types"] == ["result.accepted"]
 
+
+
+def _opportunity_request_body(trace_id: str) -> dict:
+    import hashlib
+    from datetime import datetime, timezone
+
+    return {
+        "objective": "catedralx_opportunity_evaluation",
+        "payload": {
+            "opportunity_id": "opp-trace-test",
+            "name": "Servicio digital de prueba",
+            "category": "digital_service",
+            "income_model": "hybrid",
+            "currency": "MXN",
+            "horizon_months": 12,
+            "capital_required": 5000,
+            "available_capital": 3000,
+            "revenue": [{"amount": 2000, "frequency": "monthly", "evidence_id": "ev-1"}],
+            "costs": [{"amount": 500, "frequency": "monthly", "evidence_id": "ev-1"}],
+            "evidence": [{
+                "evidence_id": "ev-1",
+                "source": "synthetic_test_fixture",
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "digest": hashlib.sha256(b"synthetic-test-evidence").hexdigest(),
+            }],
+            "assumptions": ["La demanda mensual permanece estable durante el horizonte."],
+            "scenarios": [
+                {"name": "conservative", "revenue_multiplier": 0.7, "cost_multiplier": 1.2},
+                {"name": "base", "revenue_multiplier": 1.0, "cost_multiplier": 1.0},
+                {"name": "optimistic", "revenue_multiplier": 1.2, "cost_multiplier": 0.9},
+            ],
+            "trace_id": trace_id,
+        },
+        "permissions": {"allowed_tools": [], "side_effects": "none"},
+        "success_criteria": ["Return reproducible economic scenarios."],
+    }
+
+
+def test_opportunity_rejects_payload_trace_id_mismatch(local_api):
+    # H-01: el trace_id del payload debe coincidir con el de traceparent;
+    # si difieren, la correlación se partiría sin rechazo.
+    port, _ = local_api
+    header_trace_id = "1234567890abcdef1234567890abcdef"
+    payload_trace_id = "fedcfedcfedcfedcfedcfedcfedcfedc"
+    headers = {
+        "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+        "Idempotency-Key": "trace-mismatch-test-001",
+        "traceparent": f"00-{header_trace_id}-1234567890abcdef-01",
+    }
+    status, result = request(
+        port, "/v1/request", method="POST",
+        payload=_opportunity_request_body(payload_trace_id), headers=headers,
+    )
+    assert status == 400
+    assert result["error"] == "trace_id_mismatch"
+
+
+def test_opportunity_accepts_matching_payload_trace_id(local_api):
+    port, _ = local_api
+    trace_id = "1234567890abcdef1234567890abcdef"
+    headers = {
+        "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+        "Idempotency-Key": "trace-match-test-001",
+        "traceparent": f"00-{trace_id}-1234567890abcdef-01",
+    }
+    status, result = request(
+        port, "/v1/request", method="POST",
+        payload=_opportunity_request_body(trace_id), headers=headers,
+    )
+    assert status == 202
+    assert result["trace_id"] == trace_id

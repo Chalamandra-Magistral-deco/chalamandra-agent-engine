@@ -200,7 +200,9 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
         assert name not in captured["env"]
 
     assert captured["cwd"] == tmp_path
-    assert captured["timeout"] == 60
+    # 55 s: el timeout del subproceso queda por debajo del SIGALRM del
+    # worker (60 s) para que gane la carrera y se mapee a BLOCKED.
+    assert captured["timeout"] == 55
     assert result["status"] == "ACCEPTED"
     assert result["result_id"] == "canonical-result"
 
@@ -337,8 +339,13 @@ def test_catedral_repo_is_configurable_and_defaults_to_sibling_checkout(monkeypa
     assert worker_loop._catedral_repo() == (tmp_path / "configured-engine").resolve()
 
     monkeypatch.delenv("CATEDRALX_PATH", raising=False)
-    expected = Path(worker_loop.__file__).resolve().parents[2] / "CatedralX"
-    assert worker_loop._catedral_repo() == expected.resolve()
+    parent = Path(worker_loop.__file__).resolve().parents[2]
+    # H-03: acepta ambas grafías del checkout hermano ("CatedralX"
+    # canónico y "catedralx" en minúscula) cuando contienen el CLI.
+    assert worker_loop._catedral_repo() in {
+        (parent / "CatedralX").resolve(),
+        (parent / "catedralx").resolve(),
+    }
 
 
 
@@ -629,6 +636,14 @@ def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonc
         signing_key.verify_key.encode().hex(),
     )
 
+    # La importación de AEX necesita elite/ en sys.path; no depender del
+    # orden de ejecución (otros módulos lo insertan al importar, pero este
+    # test debe pasar también aislado).
+    import sys
+
+    elite_path = str((catedralx_root / "elite").resolve())
+    if elite_path not in sys.path:
+        sys.path.insert(0, elite_path)
     from AEX.DECISION import ordenes
 
     payload = _approved_business_proposal_payload("cycle-real-ed25519-test")
@@ -750,3 +765,37 @@ def test_stale_lease_does_not_publish_candidate(monkeypatch):
         })
 
     assert saved_candidates == []
+
+
+def test_catedralx_subprocess_timeout_is_blocked_not_raised(monkeypatch, tmp_path):
+    # H-02: un timeout del subproceso de CatedralX debe mapearse a BLOCKED,
+    # no propagarse como excepción fuera de process_task.
+    import subprocess
+
+    def raising_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="BIN/catedral", timeout=55)
+
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "run", raising_run)
+    payload = _economic_evaluation_payload()
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "catedralx_execution_error:TimeoutExpired"
+
+
+def test_catedralx_subprocess_os_error_is_blocked_not_raised(monkeypatch, tmp_path):
+    # H-02: un checkout inexistente (OSError al lanzar el subproceso) también
+    # debe mapearse a BLOCKED.
+    import subprocess
+
+    def raising_run(*args, **kwargs):
+        raise FileNotFoundError("BIN/catedral not found")
+
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(subprocess, "run", raising_run)
+    payload = _economic_evaluation_payload()
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "catedralx_execution_error:FileNotFoundError"

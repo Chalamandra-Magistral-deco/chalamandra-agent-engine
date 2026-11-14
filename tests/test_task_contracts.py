@@ -410,3 +410,43 @@ def test_real_worker_runs_canonical_catedralx_opportunity_cli(monkeypatch):
     assert saved[0]["status"] == "candidate"
     assert completed[0]["candidate_result"]["status"] == "candidate"
     assert completed[0]["candidate_result"]["economic_assessment"]["evaluation_hash"] == assessment["evaluation_hash"]
+
+
+def test_opportunity_worker_uses_task_trace_id_over_payload_trace_id(monkeypatch):
+    # H-01 (defensa en profundidad): si una tarea llega al worker con un
+    # trace_id de payload distinto al de la tarea, manda el de la tarea.
+    from api.task_contracts import CATEDRALX_OPPORTUNITY_EVALUATION
+    saved, completed = [], []
+    _patch_persistence(monkeypatch, saved, completed)
+    task_trace_id = "1234567890abcdef1234567890abcdef"
+    payload_trace_id = "fedcfedcfedcfedcfedcfedcfedcfedc"
+    payload = _opportunity_payload(payload_trace_id)
+    result_from_engine = {
+        "result_id": "opp-result-002", "engine": "CatedralX",
+        "evaluation_domain": "business_opportunity", "status": "ANALYSIS_COMPLETE",
+        "evaluation_hash": "c" * 64, "scenarios": {}, "financials": {},
+        "decision_candidate": "DEFER", "trace_id": task_trace_id,
+        "analysis_only": True, "orders_created": False, "orders_executed": False,
+        "authorization": "NOT_GRANTED", "independent_acceptance_required": True,
+        "opportunity_id": "opp-test-01",
+    }
+    observed = {}
+    monkeypatch.setattr(
+        worker_loop, "_run_catedralx_opportunity",
+        lambda value: observed.update(value) or result_from_engine,
+    )
+
+    class ForbiddenMaster:
+        def __init__(self):
+            raise AssertionError("opportunity evaluation must route to CatedralX")
+
+    monkeypatch.setattr(worker_loop, "Master", ForbiddenMaster)
+    result = worker_loop.process_task({
+        "task_id": "opportunity-trace-override-test",
+        "objective": CATEDRALX_OPPORTUNITY_EVALUATION,
+        "payload": json.dumps(payload),
+        "trace_id": task_trace_id,
+    })
+    assert observed["trace_id"] == task_trace_id
+    assert result["status"] == "candidate"
+    assert result["catedralx_trace_id"] == task_trace_id
