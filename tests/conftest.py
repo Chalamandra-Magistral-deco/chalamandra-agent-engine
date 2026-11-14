@@ -21,6 +21,7 @@ def isolate_state_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(distribution_store, "_state_dir", lambda: tmp_path)
     monkeypatch.setattr(webhook_dispatcher, "_state_dir", lambda: tmp_path)
     monkeypatch.setattr(trace_store, "_trace_file", lambda: tmp_path / "traces.jsonl")
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "a5" * 32)
     yield
 
 
