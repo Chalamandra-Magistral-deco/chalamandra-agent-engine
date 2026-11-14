@@ -13,24 +13,23 @@ def _state_dir() -> Path:
     return agents_state_dir()
 
 
-def _digest_key() -> bytes | None:
+def _digest_key() -> bytes:
     raw = os.getenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "").strip()
-    if not raw:
-        return None
-    if len(raw) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw):
-        return bytes.fromhex(raw)
-    return raw.encode("utf-8")
+    if len(raw) != 64 or not re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+        raise RuntimeError(
+            "CHALAMANDRA_CANDIDATE_HMAC_KEY es obligatorio y debe contener "
+            "exactamente 64 caracteres hexadecimales (32 bytes)"
+        )
+    return bytes.fromhex(raw)
+
+
+def require_integrity_key() -> None:
+    """Fail startup when candidate-record integrity cannot be authenticated."""
+    _digest_key()
 
 
 def _record_digest_fields(record: dict) -> tuple[str, str]:
-    """Digest over the whole record (minus the digest fields themselves).
-
-    HMAC-SHA256 when CHALAMANDRA_CANDIDATE_HMAC_KEY is set; plain SHA-256
-    otherwise. Plain SHA-256 detects accidental edits and corruption, not
-    an attacker who recomputes the digest; production must set the key.
-    Rotating the key invalidates digests written under the old key (reads
-    then fail closed); re-signing on rotation is not implemented yet.
-    """
+    """Authenticate the complete candidate record with HMAC-SHA256."""
     body = {
         key: value
         for key, value in record.items()
@@ -43,24 +42,24 @@ def _record_digest_fields(record: dict) -> tuple[str, str]:
         separators=(",", ":"),
         allow_nan=False,
     )
-    key = _digest_key()
-    if key is None:
-        return "sha256", hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-    return "hmac-sha256", hmac.new(key, serialized.encode("utf-8"), hashlib.sha256).hexdigest()
+    digest = hmac.new(
+        _digest_key(),
+        serialized.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return "hmac-sha256", digest
 
 
 def _verify_record_digest(record: dict) -> None:
     digest = record.get("record_digest")
-    alg = record.get("record_digest_alg")
-    if digest is None and alg is None:
-        return  # Legacy record written before digests existed.
-    if not isinstance(digest, str) or not isinstance(alg, str):
-        raise ValueError("candidate record_digest inválido")
-    expected_alg, expected = _record_digest_fields(record)
-    if alg != expected_alg or not hmac.compare_digest(digest, expected):
-        raise ValueError(
-            "candidate record integrity check failed: record_digest no coincide"
-        )
+    algorithm = record.get("record_digest_alg")
+    if not isinstance(digest, str) or not isinstance(algorithm, str):
+        raise ValueError("candidate record_digest missing or invalid")
+    if algorithm != "hmac-sha256":
+        raise ValueError("candidate record_digest algorithm is not trusted")
+    expected_algorithm, expected = _record_digest_fields(record)
+    if algorithm != expected_algorithm or not hmac.compare_digest(digest, expected):
+        raise ValueError("candidate record integrity check failed: record_digest mismatch")
 
 
 def _candidates_file() -> Path:
