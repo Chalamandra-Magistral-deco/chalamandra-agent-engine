@@ -619,7 +619,7 @@ def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonc
     from nacl.signing import SigningKey
 
     catedralx_root = Path(
-        os.getenv("CATEDRALX_PATH") or (Path(__file__).resolve().parents[1] / "CatedralX")
+        os.getenv("CATEDRALX_PATH") or (Path(__file__).resolve().parents[2] / "CatedralX")
     ).resolve()
     monkeypatch.setenv("CATEDRALX_PATH", str(catedralx_root))
     monkeypatch.setenv("CATEDRALX_STATE_DIR", str(tmp_path / "catedralx-state"))
@@ -629,6 +629,7 @@ def test_authorized_business_proposal_reverifies_real_ed25519_assertion_and_nonc
         signing_key.verify_key.encode().hex(),
     )
 
+    monkeypatch.syspath_prepend(str(catedralx_root / "elite"))
     from AEX.DECISION import ordenes
 
     payload = _approved_business_proposal_payload("cycle-real-ed25519-test")
