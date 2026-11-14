@@ -72,8 +72,10 @@ def test_trace_fsync_is_batched_per_interval(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(trace_store, "_trace_file", lambda: target)
     monkeypatch.setattr(trace_store.os, "fsync", lambda fd: calls.append(fd))
-    monkeypatch.setattr(trace_store, "_LAST_SYNC", 0.0)
+    # The monotonic clock may start below 60 seconds in a fresh CI container.
+    monkeypatch.setattr(trace_store, "_LAST_SYNC", -61.0)
     monkeypatch.setattr(trace_store, "_SYNC_INTERVAL_SECONDS", 60.0)
+    monkeypatch.setattr(trace_store, "_TRACE_TARGET_READY", None)
 
     for number in range(5):
         trace_store.record_request(
