@@ -132,7 +132,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --detach --name chalamandra-agents-ci chalamandra-agents:ci
+          # Disposable CI-only key; never use this value outside the test job.
+          docker run --detach --name chalamandra-agents-ci \
+            --env CHALAMANDRA_CANDIDATE_HMAC_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            chalamandra-agents:ci
           for ((attempt = 1; attempt <= 30; attempt++)); do
             status="$(docker inspect --format='{{.State.Health.Status}}' chalamandra-agents-ci)"
             if [[ "$status" == "healthy" ]]; then
