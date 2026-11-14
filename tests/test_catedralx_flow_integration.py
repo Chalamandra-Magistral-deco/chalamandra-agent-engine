@@ -493,7 +493,9 @@ def test_approved_business_cycle_runs_with_models_off_and_returns_after_acceptan
             {
                 "scope": "acceptance:write",
                 "exp": int(time.time()) + 120,
-                "sub": "isolated-test-verifier",
+                # C-7: el `sub` del JWT de aceptación debe coincidir con el
+                # `verifier_id` de la decisión firmada.
+                "sub": "isolated-business-test-verifier",
             },
             secret,
             algorithm="HS256",

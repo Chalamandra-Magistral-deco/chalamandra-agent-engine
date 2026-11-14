@@ -190,7 +190,9 @@ def test_health_inspect_and_tools_are_readable_on_loopback(local_api):
     status, health = request(port, "/healthz")
     assert status == 200
     assert health["status"] == "ok"
-    assert health["execution_enabled"] is False
+    # F-8: el health sin autenticación no expone la política de ejecución.
+    assert "execution_enabled" not in health
+    assert "magis_execution_enabled" not in health
 
     status, inspect = request(port, "/v1/inspect")
     assert status == 200
@@ -249,6 +251,10 @@ def test_model_backed_routes_are_disabled_by_default(local_api):
     )
     assert status == 403
     assert result["error"] == "model_calls_disabled"
+    # A-06: el detalle no debe mencionar la credencial muerta
+    # CHALAMANDRA_API_TOKEN (eliminada en 3031000); la auth es JWT.
+    assert "CHALAMANDRA_API_TOKEN" not in result.get("detail", "")
+    assert "JWT" in result.get("detail", "")
 
 
 def test_loopback_without_token_allows_only_read_only_get(monkeypatch: pytest.MonkeyPatch):
