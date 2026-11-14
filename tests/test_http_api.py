@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from api.server import create_server
+from api.server import create_server, _is_loopback_host
 from api import task_bus
 from core.master import Master
 from api.safe_http import ResolvedWebhookTarget
@@ -19,6 +19,18 @@ from api.safe_http import ResolvedWebhookTarget
 TEST_TOKEN = "test-api-token"
 TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
 TEST_MAGIS_JWT_SECRET = "magis-service-test-secret-distinto-y-largo-32-bytes"
+
+def test_container_wildcard_bind_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ALLOW_CONTAINER_BIND", raising=False)
+    assert _is_loopback_host("127.0.0.1") is True
+    assert _is_loopback_host("0.0.0.0") is False
+
+    monkeypatch.setenv("ALLOW_CONTAINER_BIND", "true")
+    assert _is_loopback_host("0.0.0.0") is True
+
+    monkeypatch.setenv("ALLOW_CONTAINER_BIND", "false")
+    assert _is_loopback_host("0.0.0.0") is False
+
 
 def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchestration:read") -> str:
     import time
