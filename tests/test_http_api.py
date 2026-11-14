@@ -137,6 +137,24 @@ def test_v1_request_authenticates_enqueues_and_persists_w3c_trace(local_api, tmp
     assert "query-secret" not in trace_file.read_text()
 
 
+def test_authorization_requires_one_well_formed_bearer_token(local_api):
+    port, _ = local_api
+    valid_token = make_jwt(scopes="jobs:read")
+    for authorization in (
+        f"Basic {valid_token}",
+        f"Bearer  {valid_token}",
+        f"Bearer Bearer {valid_token}",
+        f"Bearer {valid_token} extra",
+    ):
+        status, body = request(
+            port,
+            "/v1/inspect",
+            headers={"Authorization": authorization},
+        )
+        assert status == 401
+        assert body["error"] == "unauthorized"
+
+
 def test_v1_request_requires_auth_and_idempotency_key(local_api):
     port, _ = local_api
     payload = {"objective": "test", "payload": {}, "permissions": {"allowed_tools": [], "side_effects": "none"}}
