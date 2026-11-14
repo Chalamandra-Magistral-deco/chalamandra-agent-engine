@@ -138,21 +138,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Disposable CI-only key shared by both containers; never use outside CI.
+          # Disposable CI-only credentials; never reuse outside this isolated smoke test.
           integrity_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          jwt_secret="$(printf '%s-%s' 'synthetic-smoke-jwt' 'secret-32-bytes-ok')"
+          service_secret="synthetic-smoke-service-jwt-secret"
+          webhook_secret="synthetic-smoke-webhook-secret-32-bytes-min"
+          verifier_id="isolated-docker-e2e-verifier"
+          verifier_seed="$(printf '44%.0s' {1..32})"
+          verifier_public_key="$(docker run --rm --entrypoint python --env TEST_SEED="$verifier_seed" chalamandra-agents:ci -c 'import os; from nacl.signing import SigningKey; print(SigningKey(bytes.fromhex(os.environ["TEST_SEED"])).verify_key.encode().hex())')"
+
           docker network create chalamandra-agents-ci
           docker volume create chalamandra-agents-ci-state
+
           docker run --detach --name chalamandra-agents-api-ci \
             --network chalamandra-agents-ci \
             --publish 127.0.0.1:8766:8766 \
             --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CHALAMANDRA_JWT_SECRET="$jwt_secret" \
+            --env CHALAMANDRA_CATEDRALX_JWT_SECRET="$service_secret" \
+            --env CHALAMANDRA_API_ENABLE_MODEL_CALLS=false \
+            --env CHALAMANDRA_VERIFIER_ID="$verifier_id" \
+            --env CHALAMANDRA_VERIFIER_PUBLIC_KEY="$verifier_public_key" \
+            --env CHALAMANDRA_WEBHOOK_SECRET="$webhook_secret" \
+            --env CHALAMANDRA_WEBHOOK_PRIVATE_HOST_ALLOWLIST=chalamandra-e2e-runner-ci \
             chalamandra-agents:ci
+
           docker run --detach --name chalamandra-agents-worker-ci \
             --network chalamandra-agents-ci \
             --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CHALAMANDRA_API_ENABLE_MODEL_CALLS=false \
             chalamandra-worker:ci
+
           for container in chalamandra-agents-api-ci chalamandra-agents-worker-ci; do
             healthy=false
             for ((attempt = 1; attempt <= 30; attempt++)); do
@@ -175,6 +193,33 @@ jobs:
             fi
           done
 
+      - name: Run accepted and rejected business flows against Docker containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          integrity_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          jwt_secret="$(printf '%s-%s' 'synthetic-smoke-jwt' 'secret-32-bytes-ok')"
+          service_secret="synthetic-smoke-service-jwt-secret"
+          webhook_secret="synthetic-smoke-webhook-secret-32-bytes-min"
+          verifier_id="isolated-docker-e2e-verifier"
+          verifier_seed="$(printf '44%.0s' {1..32})"
+
+          docker run --rm --name chalamandra-e2e-runner-ci \
+            --network chalamandra-agents-ci \
+            --network-alias chalamandra-e2e-runner-ci \
+            --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra:ro \
+            --volume "$GITHUB_WORKSPACE/verifier:/app/verifier:ro" \
+            --env CHALAMANDRA_STATE_DIR=/home/chalamandra/.local/state/chalamandra \
+            --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CHALAMANDRA_JWT_SECRET="$jwt_secret" \
+            --env CHALAMANDRA_CATEDRALX_JWT_SECRET="$service_secret" \
+            --env CHALAMANDRA_WEBHOOK_SECRET="$webhook_secret" \
+            --env CHALAMANDRA_VERIFIER_ID="$verifier_id" \
+            --env CHALAMANDRA_ED25519_SEED="$verifier_seed" \
+            --entrypoint python \
+            chalamandra-agents:ci \
+            /app/scripts/docker_business_e2e.py
+
       - name: Print container logs on failure
         if: failure()
         run: |
@@ -184,6 +229,6 @@ jobs:
       - name: Remove smoke-test containers and shared state
         if: always()
         run: |
-          docker rm --force chalamandra-agents-api-ci chalamandra-agents-worker-ci || true
+          docker rm --force chalamandra-e2e-runner-ci chalamandra-agents-api-ci chalamandra-agents-worker-ci || true
           docker volume rm chalamandra-agents-ci-state || true
           docker network rm chalamandra-agents-ci || true
