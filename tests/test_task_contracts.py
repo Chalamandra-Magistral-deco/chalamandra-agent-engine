@@ -267,3 +267,92 @@ def test_catedralx_blocked_decision_result_keeps_identity_and_never_accepts(monk
     assert saved[0]["status"] == "blocked"
     assert completed[0]["result_id"] == decision["result_id"]
     assert completed[0]["candidate_result"]["status"] == "blocked"
+
+
+def _opportunity_payload(trace_id="abcdefabcdefabcdefabcdefabcdefab"):
+    import hashlib
+    return {
+        "opportunity_id": "opp-test-01",
+        "name": "Servicio digital",
+        "category": "digital_service",
+        "currency": "MXN",
+        "horizon_months": 12,
+        "capital_required": 5000,
+        "available_capital": 3000,
+        "revenue": [{"amount": 2000, "frequency": "monthly", "evidence_id": "ev-1"}],
+        "costs": [{"amount": 500, "frequency": "monthly", "evidence_id": "ev-1"}],
+        "evidence": [{
+            "evidence_id": "ev-1", "source": "controlled_test_fixture",
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "digest": hashlib.sha256(b"fixture").hexdigest(),
+        }],
+        "assumptions": ["La demanda mensual permanece estable durante el horizonte."],
+        "scenarios": [
+            {"name": "conservative", "revenue_multiplier": 0.7, "cost_multiplier": 1.2},
+            {"name": "base", "revenue_multiplier": 1.0, "cost_multiplier": 1.0},
+            {"name": "optimistic", "revenue_multiplier": 1.2, "cost_multiplier": 0.9},
+        ],
+        "trace_id": trace_id,
+    }
+
+
+def test_opportunity_evaluation_contract_validates_business_economics_without_market_prices():
+    from api.task_contracts import CATEDRALX_OPPORTUNITY_EVALUATION
+    payload = _opportunity_payload()
+    assert validate_task_contract(CATEDRALX_OPPORTUNITY_EVALUATION, payload) is None
+    assert "historical_prices" not in payload
+
+
+def test_opportunity_evaluation_contract_rejects_missing_evidence_and_scenario():
+    from api.task_contracts import CATEDRALX_OPPORTUNITY_EVALUATION
+    payload = _opportunity_payload()
+    payload["revenue"][0]["evidence_id"] = "missing"
+    assert validate_task_contract(CATEDRALX_OPPORTUNITY_EVALUATION, payload) == (
+        "opportunity_revenue_evidence_reference_invalid"
+    )
+    payload = _opportunity_payload()
+    payload["scenarios"] = payload["scenarios"][:2]
+    assert validate_task_contract(CATEDRALX_OPPORTUNITY_EVALUATION, payload) == (
+        "opportunity_requires_three_scenarios"
+    )
+
+
+def test_opportunity_evaluation_routes_to_catedralx_and_publishes_only_candidate(monkeypatch):
+    from api.task_contracts import CATEDRALX_OPPORTUNITY_EVALUATION
+    saved, completed = [], []
+    _patch_persistence(monkeypatch, saved, completed)
+    trace_id = "abcdefabcdefabcdefabcdefabcdefab"
+    payload = _opportunity_payload(trace_id)
+    result_from_engine = {
+        "result_id": "opp-result-001", "engine": "CatedralX",
+        "evaluation_domain": "business_opportunity", "status": "ANALYSIS_COMPLETE",
+        "evaluation_hash": "c" * 64, "scenarios": {}, "financials": {},
+        "decision_candidate": "DEFER", "trace_id": trace_id,
+        "analysis_only": True, "orders_created": False, "orders_executed": False,
+        "authorization": "NOT_GRANTED", "independent_acceptance_required": True,
+        "opportunity_id": "opp-test-01",
+    }
+    observed = {}
+    monkeypatch.setattr(
+        worker_loop, "_run_catedralx_opportunity",
+        lambda value: observed.update(value) or result_from_engine,
+    )
+    class ForbiddenMaster:
+        def __init__(self):
+            raise AssertionError("opportunity evaluation must route to CatedralX")
+    monkeypatch.setattr(worker_loop, "Master", ForbiddenMaster)
+    result = worker_loop.process_task({
+        "task_id": "opportunity-route-test",
+        "objective": CATEDRALX_OPPORTUNITY_EVALUATION,
+        "payload": json.dumps(payload),
+        "trace_id": trace_id,
+    })
+    assert result["status"] == "candidate"
+    assert result["decision_result"] == result_from_engine
+    assert result["engine"] == "CatedralX"
+    assert result["opportunity_id"] == "opp-test-01"
+    assert result["catedralx_trace_id"] == trace_id
+    assert result["orders_created"] is False
+    assert result["orders_executed"] is False
+    assert completed[0]["candidate_result"]["status"] == "candidate"
+    assert len(saved) == 1

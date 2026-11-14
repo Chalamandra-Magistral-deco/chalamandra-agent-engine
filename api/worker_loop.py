@@ -16,6 +16,7 @@ from api import task_bus
 from api import candidate_store
 from api.task_contracts import (
     CATEDRALX_ECONOMIC_EVALUATION,
+    CATEDRALX_OPPORTUNITY_EVALUATION,
     CATEDRALX_ECONOMIC_PROPOSAL_REVIEW,
     validate_task_contract,
 )
@@ -220,6 +221,73 @@ def _run_catedralx(payload: dict) -> dict:
                 "return_code": result.returncode,
             }
         return decision
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+
+def _run_catedralx_opportunity(payload: dict) -> dict:
+    """Run CatedralX's deterministic business-opportunity contract; no external effects."""
+    import subprocess
+    import tempfile
+
+    trace_id = payload.get("trace_id")
+    if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
+        return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
+    fd, temp_path = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, allow_nan=False)
+        allowed = (
+            "CATEDRALX_PATH", "CATEDRALX_PYTHON", "PATH", "PYTHONPATH",
+            "HOME", "TMPDIR",
+        )
+        env = {key: value for key, value in os.environ.items() if key in allowed}
+        env["CATEDRALX_PYTHON"] = sys.executable
+        result = subprocess.run(
+            ["bash", "BIN/catedral", "economic-opportunity", "--input-file", temp_path],
+            cwd=_catedral_repo(), env=env, capture_output=True, text=True,
+            timeout=30, check=False,
+        )
+        output = result.stdout.strip()
+        start = output.find("{")
+        if start < 0:
+            return {"status": "BLOCKED", "reason": "catedralx_opportunity_returned_no_json"}
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(output[start:])
+        except json.JSONDecodeError:
+            return {"status": "BLOCKED", "reason": "catedralx_opportunity_invalid_json"}
+        if not isinstance(parsed, dict):
+            return {"status": "BLOCKED", "reason": "catedralx_opportunity_result_not_object"}
+        if result.returncode != 0:
+            return {"status": "BLOCKED", "reason": parsed.get("reason", "catedralx_opportunity_failed")}
+        required = {
+            "result_id", "engine", "evaluation_domain", "status", "evaluation_hash",
+            "scenarios", "financials", "decision_candidate", "trace_id",
+            "analysis_only", "orders_created", "orders_executed",
+            "authorization", "independent_acceptance_required",
+        }
+        if not required.issubset(parsed):
+            return {"status": "BLOCKED", "reason": "opportunity_result_missing_fields"}
+        if (
+            parsed.get("engine") != "CatedralX"
+            or parsed.get("evaluation_domain") != "business_opportunity"
+            or parsed.get("status") != "ANALYSIS_COMPLETE"
+            or parsed.get("trace_id") != trace_id
+            or not isinstance(parsed.get("evaluation_hash"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", parsed["evaluation_hash"])
+            or parsed.get("decision_candidate") not in {"PURSUE", "DEFER", "REJECT"}
+            or parsed.get("analysis_only") is not True
+            or parsed.get("orders_created") is not False
+            or parsed.get("orders_executed") is not False
+            or parsed.get("authorization") != "NOT_GRANTED"
+            or parsed.get("independent_acceptance_required") is not True
+        ):
+            return {"status": "BLOCKED", "reason": "opportunity_result_contract_invalid"}
+        return parsed
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError) as exc:
+        return {"status": "BLOCKED", "reason": f"catedralx_opportunity_execution_error:{type(exc).__name__}"}
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -498,6 +566,8 @@ def process_task(task: dict) -> dict:
             pass
 
     objective = task.get("objective", "")
+    if objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
+        payload.setdefault("trace_id", task.get("trace_id"))
     evidence = []
     summary = "No ejecutado"
     status = "failed"
@@ -511,6 +581,30 @@ def process_task(task: dict) -> dict:
         if contract_error:
             summary = f"Contrato de tarea bloqueado: {contract_error}"
             status = "blocked"
+        elif objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
+            result = _run_catedralx_opportunity(payload)
+            if result.get("evaluation_domain") == "business_opportunity" and result.get("result_id"):
+                canonical_decision_result = result
+                catedral_result_id = str(result["result_id"])
+                catedralx_trace_id = str(result.get("trace_id") or "")
+                evidence.append({
+                    "evidence_id": str(uuid.uuid4()),
+                    "kind": "economic_opportunity_result",
+                    "source": "catedralx",
+                    "opportunity_id": result.get("opportunity_id"),
+                    "description": "Evaluación económica estructurada; escenarios y cálculos sin autorización ni efectos externos",
+                    "digest": __import__("hashlib").sha256(
+                        json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+                    ).hexdigest(),
+                })
+                summary = (
+                    f"Evaluación económica completada: {result.get('decision_candidate')}; "
+                    "pendiente de aceptación independiente y autorización humana."
+                )
+                status = "candidate"
+            else:
+                summary = f"Evaluación económica bloqueada: {result.get('reason', 'resultado inválido')}"
+                status = "blocked"
         elif objective.strip() == CATEDRALX_ECONOMIC_EVALUATION:
             engine_payload = dict(payload)
             engine_payload.setdefault("trace_id", task.get("trace_id"))
@@ -707,6 +801,11 @@ def process_task(task: dict) -> dict:
         "business_cycle_id": (
             business_proposal_context.get("cycle_id")
             if business_proposal_context else None
+        ),
+        "opportunity_id": (
+            canonical_decision_result.get("opportunity_id")
+            if canonical_decision_result and canonical_decision_result.get("evaluation_domain") == "business_opportunity"
+            else None
         ),
         "business_proposal": business_proposal_context,
         "execution_boundary": (
