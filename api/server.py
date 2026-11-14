@@ -1233,6 +1233,13 @@ def create_server(
             "CHALAMANDRA_MAGIS_JWT_SECRET de al menos 32 caracteres es obligatorio al habilitar MAGIS"
         )
 
+    try:
+        candidate_store.require_integrity_key()
+    except RuntimeError as exc:
+        raise ValueError(
+            "API no puede iniciar sin CHALAMANDRA_CANDIDATE_HMAC_KEY válida"
+        ) from exc
+
     return EngineHTTPServer(
         (bind_host, bind_port),
         EngineRequestHandler,
