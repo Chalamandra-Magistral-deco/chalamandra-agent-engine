@@ -274,6 +274,8 @@ def _run_catedralx_opportunity(payload: dict) -> dict:
             parsed.get("engine") != "CatedralX"
             or parsed.get("evaluation_domain") != "business_opportunity"
             or parsed.get("status") != "ANALYSIS_COMPLETE"
+            or not isinstance(parsed.get("result_id"), str)
+            or not re.fullmatch(r"[0-9a-f]{32}", parsed["result_id"])
             or parsed.get("trace_id") != trace_id
             or not isinstance(parsed.get("evaluation_hash"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", parsed["evaluation_hash"])
@@ -566,7 +568,7 @@ def process_task(task: dict) -> dict:
             pass
 
     objective = task.get("objective", "")
-    if objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
+    if isinstance(objective, str) and objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
         payload.setdefault("trace_id", task.get("trace_id"))
     evidence = []
     summary = "No ejecutado"
