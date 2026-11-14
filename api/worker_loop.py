@@ -124,8 +124,13 @@ def _run_catedralx(payload: dict) -> dict:
         return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
 
     fd, temp_path = tempfile.mkstemp(suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError, OSError):
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return {"status": "BLOCKED", "reason": "snapshot_not_serializable"}
 
     _ALLOWED = (
         "CATEDRALX_PATH",
@@ -220,6 +225,8 @@ def _run_catedralx(payload: dict) -> dict:
                 "return_code": result.returncode,
             }
         return decision
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "reason": "catedralx_timeout"}
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)

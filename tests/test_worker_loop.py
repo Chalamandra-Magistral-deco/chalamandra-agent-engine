@@ -751,3 +751,51 @@ def test_stale_lease_does_not_publish_candidate(monkeypatch):
         })
 
     assert saved_candidates == []
+
+
+def _market_payload(**extra):
+    prices = [1.10 + i * 0.001 for i in range(30)]
+    payload = sign_market_payload({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "test_verified_feed",
+        **extra,
+    })
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    return payload
+
+
+def test_catedralx_unserializable_snapshot_leaves_no_temp_file(monkeypatch, tmp_path):
+    import subprocess
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("el motor no debe ejecutarse")
+
+    monkeypatch.setattr(subprocess, "run", must_not_run)
+    result = worker_loop._run_catedralx(
+        _market_payload(dynamic_constraints={"x": float("nan")})
+    )
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "snapshot_not_serializable"
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_catedralx_timeout_returns_failed_and_cleans_up(monkeypatch, tmp_path):
+    import subprocess
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+
+    def hung(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 60))
+
+    monkeypatch.setattr(subprocess, "run", hung)
+    result = worker_loop._run_catedralx(_market_payload())
+    assert result == {"status": "failed", "reason": "catedralx_timeout"}
+    assert list(tmp_path.glob("*.json")) == []
