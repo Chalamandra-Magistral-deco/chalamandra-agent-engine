@@ -25,12 +25,16 @@ from telemetry.resources import record_task_resources
 from api.heartbeat import write_worker_heartbeat
 
 
+WORKER_TASK_TIMEOUT_SECONDS = 60
+WORKER_TASK_LEASE_SECONDS = 120
+
+
 class TaskTimeout(Exception):
     pass
 
 
 def _task_timeout_handler(signum, frame):
-    raise TaskTimeout("task exceeded 60s timeout")
+    raise TaskTimeout(f"task exceeded {WORKER_TASK_TIMEOUT_SECONDS}s timeout")
 
 def _catedral_repo() -> Path:
     """Resolve CatedralX from configuration or the canonical sibling checkout."""
@@ -867,17 +871,17 @@ def _run_worker_loop(stop_event=None):
                 f"conflicted={publication_report['conflicted']}"
             )
         write_worker_heartbeat("idle")
-        task = task_bus.get_next_task()
+        task = task_bus.get_next_task(lease_seconds=WORKER_TASK_LEASE_SECONDS)
         if task:
             write_worker_heartbeat("processing", task_id=task["task_id"])
             signal.signal(signal.SIGALRM, _task_timeout_handler)
-            signal.alarm(60)
+            signal.alarm(WORKER_TASK_TIMEOUT_SECONDS)
             try:
                 process_task(task)
             except TaskTimeout:
                 task_bus.mark_task_completed(
                     task["task_id"],
-                    {"status": "failed", "reason": "timeout_60s"},
+                    {"status": "failed", "reason": f"timeout_{WORKER_TASK_TIMEOUT_SECONDS}s"},
                     None,
                     lease_token=task.get("lease_token"),
                 )
@@ -962,7 +966,7 @@ def main():
     finally:
         stop_event.set()
         for process in children.values():
-            process.join(timeout=65)
+            process.join(timeout=WORKER_TASK_TIMEOUT_SECONDS + 5)
             if process.is_alive():
                 process.terminate()
                 process.join(timeout=5)
