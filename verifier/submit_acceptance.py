@@ -5,6 +5,12 @@ This client never signs decisions and never reads an Ed25519 private seed.
 Provide a short-lived Bearer token in CHALAMANDRA_ACCEPTANCE_TOKEN and set
 CHALAMANDRA_VERIFIER_PUBLIC_KEY to the public key trusted by the API.
 
+Issuer requirement (C-7): the acceptance JWT must be minted with
+``sub`` equal to the verifier identity (CHALAMANDRA_VERIFIER_ID) that signs
+the decision. The API rejects a token whose ``sub`` differs from the
+decision's ``verifier_id``; tokens without ``sub`` are still accepted for
+existing issuers that do not set it.
+
 Example (reviewed input JSON -> isolated signer -> API submitter):
   python verifier/independent_acceptance_verifier.py --confirm ACCEPT:<candidate_id> \
     < decision.json | env -u CHALAMANDRA_ED25519_SEED \

@@ -16,19 +16,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Checkout canonical CatedralX source for tests
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: 4fc78174ff350b726ecf8a05e1a3fcf4162f7bf7
+          ref: a5fed4154dba0f5b92564b2917630715e326c92b
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -49,3 +49,76 @@ jobs:
 
       - name: Type check
         run: python -m mypy api adapters core dynamics pipeline registry security telemetry
+
+  secret-history-scan:
+    name: Scan all Git history with Gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout all branches and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Gitleaks and verify release checksum
+        run: |
+          set -euo pipefail
+          version="8.30.1"
+          archive="gitleaks_${version}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
+          curl --fail --silent --show-error --location "${base}/${archive}" --output "/tmp/${archive}"
+          curl --fail --silent --show-error --location "${base}/gitleaks_${version}_checksums.txt" --output /tmp/gitleaks-checksums.txt
+          cd /tmp
+          grep " ${archive}$" gitleaks-checksums.txt | sha256sum --check --status
+          tar -xzf "/tmp/${archive}" -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      - name: Scan all reachable refs and redact findings
+        run: |
+          set +e
+          /tmp/gitleaks git --verbose --redact --report-format json --report-path /tmp/gitleaks-report.json --log-opts="--all" .
+          scan_status=$?
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = Path("/tmp/gitleaks-report.json")
+          if report.exists():
+              for finding in json.loads(report.read_text(encoding="utf-8")):
+                  print(
+                      "GITLEAKS_FINDING "
+                      f"rule={finding.get('RuleID')} "
+                      f"file={finding.get('File')} "
+                      f"commit={finding.get('Commit')} "
+                      f"lines={finding.get('StartLine')}-{finding.get('EndLine')} "
+                      f"fingerprint={finding.get('Fingerprint')}"
+                  )
+          PY
+          exit "$scan_status"
+
+  dependency-scan:
+    name: Dependency audit and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit locked dependencies and generate SBOM
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit==2.10.1 cyclonedx-bom==8.0.1
+          python -m pip_audit -r requirements.lock
+          cyclonedx-py requirements requirements.lock --output-file sbom.cyclonedx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json

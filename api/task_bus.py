@@ -11,6 +11,18 @@ from pathlib import Path
 def _state_dir() -> Path:
     return agents_state_dir()
 
+
+# F-2 (liberación): tope de reintentos por expiración de lease. Cada intento
+# cuesta una ejecución completa del worker (hasta 60 s) más un lease de 120 s,
+# así que 5 intentos son hasta ~15 min de recuperación ante caídas transitorias
+# del worker/host. Más allá de eso la tarea casi con seguridad hace caer al
+# worker de forma determinista; reencolarla cada 120 s para siempre quemaría
+# CPU y bloquearía la cola detrás de ella. Al superar el tope la tarea pasa a
+# estado terminal 'dead_letter': visible con get_dead_letter_tasks() para que
+# un operador la inspeccione y la reencole a mano, nunca se pierde en silencio.
+MAX_TASK_ATTEMPTS = 5
+DEAD_LETTER_STATUS = "dead_letter"
+
 def _db_path() -> Path:
     path = _state_dir() / "tasks.db"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -311,8 +323,42 @@ def get_next_task(lease_seconds: int = 120) -> dict | None:
     with _get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
 
+        # F-2: una tarea cuyo worker muere siempre no se reencola para siempre.
+        # Las reclamaciones con el lease expirado y attempt_count agotado se
+        # ponen en cuarentena (dead_letter) en lugar de volver a 'queued'; lo
+        # mismo para tareas ya en cola que lleguen al tope (p. ej. bases
+        # creadas antes de este tope). El estado es terminal y observable.
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = ?, lease_until = NULL, lease_token = NULL, updated_at = ?
+            WHERE status = 'running'
+              AND lease_until IS NOT NULL
+              AND lease_until <= ?
+              AND COALESCE(attempt_count, 0) >= ?
+            """,
+            (DEAD_LETTER_STATUS, now, now, MAX_TASK_ATTEMPTS),
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = ?, lease_token = NULL, updated_at = ?
+            WHERE status = 'running'
+              AND lease_until IS NULL
+              AND updated_at <= ?
+              AND COALESCE(attempt_count, 0) >= ?
+            """,
+            (DEAD_LETTER_STATUS, now, stale_before, MAX_TASK_ATTEMPTS),
+        )
+        conn.execute(
+            "UPDATE tasks SET status = ?, updated_at = ? "
+            "WHERE status = 'queued' AND COALESCE(attempt_count, 0) >= ?",
+            (DEAD_LETTER_STATUS, now, MAX_TASK_ATTEMPTS),
+        )
+
         # Reclaim current leases and legacy pre-lease claims separately so both
         # predicates can use their partial indexes. Timestamps are normalized UTC ISO-8601.
+        # Solo se reencolan las que aún no agotaron el tope de intentos.
         conn.execute(
             """
             UPDATE tasks
@@ -320,8 +366,9 @@ def get_next_task(lease_seconds: int = 120) -> dict | None:
             WHERE status = 'running'
               AND lease_until IS NOT NULL
               AND lease_until <= ?
+              AND COALESCE(attempt_count, 0) < ?
             """,
-            (now, now),
+            (now, now, MAX_TASK_ATTEMPTS),
         )
         conn.execute(
             """
@@ -330,8 +377,9 @@ def get_next_task(lease_seconds: int = 120) -> dict | None:
             WHERE status = 'running'
               AND lease_until IS NULL
               AND updated_at <= ?
+              AND COALESCE(attempt_count, 0) < ?
             """,
-            (now, stale_before),
+            (now, stale_before, MAX_TASK_ATTEMPTS),
         )
 
         row = conn.execute(
@@ -568,6 +616,25 @@ def get_result_task_statuses(result_id: str) -> list[dict]:
         rows = conn.execute(
             "SELECT task_id, status FROM tasks WHERE result_id = ? ORDER BY task_id",
             (result_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_dead_letter_tasks(limit: int = 100) -> list[dict]:
+    """Return tasks quarantined after exhausting lease retries (F-2).
+
+    A dead-lettered task is terminal: it is never reclaimed automatically.
+    An operator inspects it here and re-enqueues a corrected task by hand.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    init_db()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT task_id, run_id, objective, status, trace_id, "
+            "attempt_count, created_at, updated_at FROM tasks "
+            "WHERE status = ? ORDER BY updated_at, task_id LIMIT ?",
+            (DEAD_LETTER_STATUS, limit),
         ).fetchall()
     return [dict(row) for row in rows]
 

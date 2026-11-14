@@ -806,3 +806,278 @@ def test_catedralx_subprocess_os_error_is_blocked_not_raised(monkeypatch, tmp_pa
     result = worker_loop._run_catedralx(payload)
     assert result["status"] == "BLOCKED"
     assert result["reason"] == "catedralx_execution_error:FileNotFoundError"
+
+
+def test_catedralx_snapshot_is_signed_when_key_configured(monkeypatch, tmp_path):
+    """H-02 (liberación): el worker firma el snapshot que escribe (ruta real).
+
+    Con CATEDRALX_SNAPSHOT_SIGNING_SECRET configurada, el snapshot que
+    _run_catedralx escribe lleva el envelope HMAC de CatedralX y la clave
+    se propaga al subproceso para que el ciclo pueda verificarla.
+    """
+    import subprocess
+
+    captured = {}
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        captured.update(env=env.copy())
+        captured["snapshot"] = json.loads(
+            Path(env["CATEDRALX_SNAPSHOT_PATH"]).read_text(encoding="utf-8")
+        )
+        output = {
+            "status": "ANALYSIS_COMPLETE",
+            "decision_result": {
+                "result_id": "canonical-result",
+                "status": "ACCEPTED",
+                "engine": "CatedralX",
+                "decision": "hold",
+                "evaluation_hash": "b" * 64,
+                "evaluation_gate": "ACCEPTED",
+                "evidence": [],
+                "assumptions": [],
+                "risks": [],
+                "provenance": [],
+                "trace_id": "1234567890abcdef1234567890abcdef",
+                "analysis_only": True,
+                "orders_created": False,
+                "orders_executed": False,
+            },
+        }
+        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setenv(
+        "CATEDRALX_SNAPSHOT_SIGNING_SECRET", "worker-loop-test-signing-key-32-bytes!"
+    )
+    prices = [100.0 + index * 0.01 for index in range(30)]
+    payload = sign_market_payload({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "synthetic-smoke-test",
+    })
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+
+    assert result["status"] == "ACCEPTED"
+    snapshot = captured["snapshot"]
+    envelope = snapshot.get("signature")
+    assert isinstance(envelope, dict)
+    assert envelope["alg"] == "HMAC-SHA256"
+    assert envelope["key_id"] == "legacy"
+    assert len(envelope["signature"]) == 64
+    # La firma verifica con el propio verificador de CatedralX.
+    module = worker_loop._load_snapshot_signing()
+    assert module is not None
+    ok, status = module.verify_snapshot_signature(snapshot)
+    assert (ok, status) == (True, "verified")
+    # La clave de verificación llega al subproceso.
+    assert (
+        captured["env"]["CATEDRALX_SNAPSHOT_SIGNING_SECRET"]
+        == "worker-loop-test-signing-key-32-bytes!"
+    )
+
+
+def test_catedralx_snapshot_stays_unsigned_without_key(monkeypatch, tmp_path):
+    """H-02: sin clave configurada el snapshot queda sin firmar (fallback documentado).
+
+    El ciclo lo rechaza fail-closed; el worker no inventa una firma.
+    """
+    import subprocess
+
+    captured = {}
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        captured["snapshot"] = json.loads(
+            Path(env["CATEDRALX_SNAPSHOT_PATH"]).read_text(encoding="utf-8")
+        )
+        output = {"status": "NO_CYCLE", "reason": "snapshot_signature_missing"}
+        return subprocess.CompletedProcess(args, 2, json.dumps(output), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.delenv("CATEDRALX_SNAPSHOT_SIGNING_SECRET", raising=False)
+    monkeypatch.delenv("CATEDRALX_SNAPSHOT_KEYRING", raising=False)
+    payload = _economic_evaluation_payload()
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+    result = worker_loop._run_catedralx(payload)
+
+    assert result["status"] == "BLOCKED"
+    assert result["reason"] == "snapshot_signature_missing"
+    assert "signature" not in captured["snapshot"]
+
+
+def _opportunity_payload_for_verification():
+    import hashlib
+
+    return {
+        "opportunity_id": "verify-synthetic-opportunity",
+        "name": "Servicio digital de prueba",
+        "category": "digital_service",
+        "income_model": "hybrid",
+        "currency": "MXN",
+        "horizon_months": 12,
+        "capital_required": 5000,
+        "available_capital": 3000,
+        "revenue": [
+            {"amount": 2000, "frequency": "monthly", "evidence_id": "verify-ev-1"}
+        ],
+        "costs": [
+            {"amount": 500, "frequency": "monthly", "evidence_id": "verify-ev-1"}
+        ],
+        "evidence": [{
+            "evidence_id": "verify-ev-1",
+            "source": "synthetic_verify_fixture",
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "digest": hashlib.sha256(b"synthetic-verify-evidence").hexdigest(),
+        }],
+        "assumptions": ["La demanda mensual permanece estable durante el horizonte."],
+        "scenarios": [
+            {"name": "conservative", "revenue_multiplier": 0.7, "cost_multiplier": 1.2},
+            {"name": "base", "revenue_multiplier": 1.0, "cost_multiplier": 1.0},
+            {"name": "optimistic", "revenue_multiplier": 1.2, "cost_multiplier": 0.9},
+        ],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+    }
+
+
+def _real_central_decision_result(monkeypatch, tmp_path):
+    """Run the real `BIN/catedral motor` once; return its decision_result.
+
+    The snapshot is signed with the test key (H-02) so the cycle accepts it.
+    State lives under tmp_path; HOME is isolated so no real state is touched.
+    """
+    import subprocess
+    import sys
+
+    repo = worker_loop._catedral_repo()
+    monkeypatch.setenv(
+        "CATEDRALX_SNAPSHOT_SIGNING_SECRET", "central-verify-test-key-32-bytes!!"
+    )
+    prices = [100.0 + index * 0.01 for index in range(59)]
+    snapshot = {"PERCEIVE": {
+        "historial_precios": prices,
+        "precio": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "synthetic-smoke-test",
+    }}
+    module = worker_loop._load_snapshot_signing()
+    assert module is not None
+    snap_path = tmp_path / "snapshot.json"
+    snap_path.write_text(
+        json.dumps(module.sign_snapshot_payload(snapshot)), encoding="utf-8"
+    )
+    state_dir = tmp_path / "catedralx-state"
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "CATEDRALX_SNAPSHOT_PATH": str(snap_path),
+        # La misma clave con la que se firmó: el ciclo la necesita para verificar.
+        "CATEDRALX_SNAPSHOT_SIGNING_SECRET": "central-verify-test-key-32-bytes!!",
+        "CATEDRALX_STATE_PATH": str(state_dir / "hormonas.json"),
+        "CATEDRALX_RESULT_STORE_PATH": str(state_dir / "results.jsonl"),
+        "CATEDRALX_FEEDBACK_PATH": str(state_dir / "feedback.jsonl"),
+        "CATEDRALX_TRACE_ID": "1234567890abcdef1234567890abcdef",
+        "CATEDRALX_PYTHON": sys.executable,
+    }
+    completed = subprocess.run(
+        ["bash", "BIN/catedral", "motor"], cwd=repo, env=env,
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    parsed = json.loads(completed.stdout)
+    assert isinstance(parsed.get("decision_result"), dict)
+    return parsed["decision_result"]
+
+
+def test_verify_evaluation_hash_via_cli_opportunity(monkeypatch, tmp_path):
+    """C-2: el hash de oportunidad se recomputa (válido pasa, manipulado bloquea)."""
+    result = worker_loop._run_catedralx_opportunity(_opportunity_payload_for_verification())
+    assert result["status"] == "ANALYSIS_COMPLETE"
+    assert result["evaluation_hash"]
+    assert worker_loop._verify_evaluation_hash_via_cli(result, "opportunity") is None
+
+    import copy
+
+    tampered = copy.deepcopy(result)
+    tampered["scenarios"]["base"]["net_result"] = 1.0
+    assert (
+        worker_loop._verify_evaluation_hash_via_cli(tampered, "opportunity")
+        == "decision_result_evaluation_hash_verification_failed"
+    )
+
+
+def test_verify_evaluation_hash_via_cli_central(monkeypatch, tmp_path):
+    """C-2: el hash central se recomputa (válido pasa, manipulado bloquea)."""
+    decision = _real_central_decision_result(monkeypatch, tmp_path)
+    evaluation = decision["evaluation"]
+    assert isinstance(evaluation, dict)
+    assert worker_loop._verify_evaluation_hash_via_cli(evaluation, "central") is None
+
+    import copy
+
+    tampered = copy.deepcopy(evaluation)
+    # OJO: en este veredicto `score` ya es 0 (BLOCKED_UNCERTAINTY); manipular
+    # el motivo sí cambia el hash.
+    tampered["reason"] = "MANIPULADO"
+    assert (
+        worker_loop._verify_evaluation_hash_via_cli(tampered, "central")
+        == "decision_result_evaluation_hash_verification_failed"
+    )
+
+
+def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_path):
+    """C-2: la ruta general bloquea un DecisionResult con hash manipulado.
+
+    El subproceso `motor` está mockeado (devuelve un DecisionResult real);
+    el paso de verificación invoca el CLI real de CatedralX.
+    """
+    import copy
+    import subprocess
+
+    real_run = subprocess.run
+    decision = _real_central_decision_result(monkeypatch, tmp_path)
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
+        if "verify-evaluation-hash" in args:
+            return real_run(
+                args, cwd=cwd, env=env, capture_output=capture_output,
+                text=text, timeout=timeout, check=check,
+            )
+        output = {"status": "ANALYSIS_COMPLETE", "decision_result": decision}
+        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setenv(
+        "CATEDRALX_SNAPSHOT_SIGNING_SECRET", "central-verify-test-key-32-bytes!!"
+    )
+    prices = [100.0 + index * 0.01 for index in range(30)]
+    payload = sign_market_payload({
+        "historical_prices": prices,
+        "current_price": prices[-1],
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "source": "synthetic-smoke-test",
+    })
+    payload["trace_id"] = "1234567890abcdef1234567890abcdef"
+
+    result = worker_loop._run_catedralx(payload)
+    assert result["status"] in {"ACCEPTED", "UNCERTAIN", "REJECTED", "BLOCKED_MISSING_INPUT"}
+    assert result["evaluation_hash"] == decision["evaluation_hash"]
+
+    tampered = copy.deepcopy(decision)
+    # OJO: en este veredicto `score` ya es 0 (BLOCKED_UNCERTAINTY); manipular
+    # el motivo sí cambia el hash.
+    tampered["evaluation"]["reason"] = "MANIPULADO"
+
+    def fake_run_tampered(args, *, cwd, env, capture_output, text, timeout, check=False):
+        if "verify-evaluation-hash" in args:
+            return real_run(
+                args, cwd=cwd, env=env, capture_output=capture_output,
+                text=text, timeout=timeout, check=check,
+            )
+        output = {"status": "ANALYSIS_COMPLETE", "decision_result": tampered}
+        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run_tampered)
+    blocked = worker_loop._run_catedralx(payload)
+    assert blocked["status"] == "BLOCKED"
+    assert blocked["reason"] == "decision_result_evaluation_hash_verification_failed"

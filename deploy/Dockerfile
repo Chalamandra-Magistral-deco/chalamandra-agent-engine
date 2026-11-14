@@ -1,6 +1,9 @@
 ARG CATEDRALX_BASE_IMAGE=catedralx:v1.0-canonico
 FROM ${CATEDRALX_BASE_IMAGE} AS catedralx
-FROM python:3.12-slim
+# Imagen base pinneada por digest (python:3.12-slim, 2026-11-14).
+# Para subirla: consultar el digest en
+# https://hub.docker.com/v2/repositories/library/python/tags/3.12-slim
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 ARG AGENTS_REVISION=unknown
 ARG AGENTS_CODE_DIRTY=unknown
 ARG CATEDRALX_REVISION=unknown
@@ -27,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /home/chalamandra/.local/state/chalamandra/catedralx /home/chalamandra/.local/state/chalamandra/agents \
     && chown -R chalamandra:chalamandra /home/chalamandra
 COPY pyproject.toml ./
+COPY requirements.lock ./
 COPY api/ ./api/
 COPY scripts/ ./scripts/
 COPY core/ ./core/
@@ -37,7 +41,11 @@ COPY registry/ ./registry/
 COPY security/ ./security/
 COPY telemetry/ ./telemetry/
 COPY dynamics/ ./dynamics/
-RUN python -m pip install --no-cache-dir .
+# Dependencias de runtime pinneadas (requirements.lock, generado con
+# scripts/gen_requirements_lock.py desde el venv que pasó la suite);
+# el paquete en sí se instala sin dependencias, que ya están en el lock.
+RUN python -m pip install --no-cache-dir -r requirements.lock \
+    && python -m pip install --no-cache-dir --no-deps .
 COPY --from=catedralx /app/elite /app/CatedralX/elite
 COPY --from=catedralx /app/BIN /app/CatedralX/BIN
 RUN chown -R chalamandra:chalamandra /app /home/chalamandra/.local

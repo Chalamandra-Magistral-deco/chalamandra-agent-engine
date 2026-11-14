@@ -1,0 +1,27 @@
+# Gitleaks allowlist — hallazgos generic-api-key en el HISTORIAL del repo.
+# Ninguno es un secreto real:
+# - config/.env.example:8 es el placeholder "replace-with-exactly-64-hex-characters".
+# - tests/test_*.py son secretos sintéticos de pruebas (JWT / Idempotency-Key de test).
+# - .github/workflows/release.yml (commits viejos) es la clave desechable de CI
+#   ("aaaa...a", 64 caracteres) usada solo en el smoke-test.
+# Se allowlistean los 12 commits del historial que contienen esos hallazgos
+# (sus únicos hallazgos son los listados arriba). Los commits nuevos no se ven
+# afectados: un secreto real en un commit futuro seguirá siendo detectado.
+[extend]
+useDefault = true
+
+[allowlist]
+commits = [
+  "fbb6afeb7e24b227479118b7d4d9b66a81f455a7",
+  "b506ab796c444c4e6763042b3de60067d5c750d4",
+  "b58ad9c39a36fe42dad916f5063e23ea184ef481",
+  "92b049c525e7ccf7802702ed60c9d37d867612b5",
+  "001c2bb93120d73e6b46750d3523eb3686ef30e3",
+  "ecebbf6c910e05677909c822c1f9cf04a35050ed",
+  "88251881ec5dbd9bb7d5225efec11b58143db356",
+  "b5c8a0d3cebdc19c55381062155d82164fdc0441",
+  "d012f3f8b4c99ae5a303f5c6d7975e4f958eb78c",
+  "29ab644ebd7a1cda5961b4fb6b81905c35217124",
+  "758c7a93c7baccd11dfcb476afaacfb9b508f861",
+  "b676fb709d604dc553bb9bce3cb1c09681168423",
+]

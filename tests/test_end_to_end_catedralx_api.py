@@ -43,14 +43,14 @@ def _http_json(url, *, method="GET", token, payload=None, extra_headers=None):
         return exc.code, json.loads(body) if body else {}
 
 
-def _make_jwt(secret, scope):
+def _make_jwt(secret, scope, subject="test-verifier"):
     def enc(data):
         return base64.urlsafe_b64encode(
             json.dumps(data, separators=(",", ":"), sort_keys=True).encode()
         ).rstrip(b"=").decode()
 
     header = enc({"alg": "HS256", "typ": "JWT"})
-    claims = enc({"scope": scope, "exp": int(time.time()) + 120, "sub": "test-verifier"})
+    claims = enc({"scope": scope, "exp": int(time.time()) + 120, "sub": subject})
     import hashlib
     import hmac
 
@@ -61,6 +61,9 @@ def _make_jwt(secret, scope):
 
 TEST_VERIFIER_SEED_HEX = "22" * 32
 TEST_VERIFIER_KEY = SigningKey(bytes.fromhex(TEST_VERIFIER_SEED_HEX))
+# Test-only HMAC key so the worker can sign the snapshot it writes (H-02).
+# Never a production secret; the cycle verifies with this same key.
+TEST_SNAPSHOT_SIGNING_SECRET = "e2e-snapshot-signing-secret-32-bytes!"
 VERIFIER_CLI = Path(__file__).resolve().parents[1] / "verifier" / "independent_acceptance_verifier.py"
 
 
@@ -109,6 +112,9 @@ def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path
     monkeypatch.setenv("CATEDRALX_STATE_PATH", str(tmp_path / "catedralx-state" / "hormonas.json"))
     monkeypatch.setenv("CATEDRALX_FEEDBACK_PATH", str(tmp_path / "catedralx-state" / "feedback.jsonl"))
     monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", str(tmp_path / "catedralx-state" / "results.jsonl"))
+    # H-02: the worker signs the snapshot it writes; the cycle verifies with
+    # the same test key. Source must be an allowlisted provenance value.
+    monkeypatch.setenv("CATEDRALX_SNAPSHOT_SIGNING_SECRET", TEST_SNAPSHOT_SIGNING_SECRET)
 
     agents_state = tmp_path / "agents-state"
     monkeypatch.setattr(task_bus, "_state_dir", lambda: agents_state)
@@ -129,7 +135,7 @@ def test_catedralx_to_agents_api_worker_preserves_blocked_missing_input(tmp_path
             "historical_prices": prices,
             "current_price": prices[-1],
             "observed_at": observed_at,
-            "source": "isolated_integration_test_fixture",
+            "source": "synthetic-smoke-test",
             "dynamic_constraints": {
                 "reinvestment_surplus": 1.0,
                 "entropy_rate": 0.1,
@@ -272,6 +278,9 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     monkeypatch.setenv("CATEDRALX_STATE_PATH", str(tmp_path / "catedralx" / "hormonas.json"))
     monkeypatch.setenv("CATEDRALX_FEEDBACK_PATH", str(tmp_path / "catedralx" / "feedback.jsonl"))
     monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", str(tmp_path / "catedralx" / "results.jsonl"))
+    # H-02: the worker signs the snapshot it writes; the cycle verifies with
+    # the same test key (inherited by the API/worker subprocesses via env).
+    monkeypatch.setenv("CATEDRALX_SNAPSHOT_SIGNING_SECRET", TEST_SNAPSHOT_SIGNING_SECRET)
     monkeypatch.setenv("CHALAMANDRA_TRACE_LOG_PATH", str(tmp_path / "agents-state" / "traces.jsonl"))
     for secret_name in (
         "CHALAMANDRA_ED25519_SEED",
@@ -372,7 +381,7 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
             "historical_prices": prices,
             "current_price": prices[-1],
             "observed_at": observed_at,
-            "source": "isolated_full_lifecycle_fixture",
+            "source": "synthetic-smoke-test",
             "dynamic_constraints": {
                 "reinvestment_surplus": 1.0,
                 "entropy_rate": 0.1,
@@ -493,7 +502,9 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         status, acceptance = _http_json(
             f"{base_url}/v1/acceptance",
             method="POST",
-            token=_make_jwt(jwt_secret, "acceptance:write"),
+            # C-7: el `sub` del JWT de aceptación debe coincidir con el
+            # `verifier_id` de la decisión firmada ("isolated-test-verifier").
+            token=_make_jwt(jwt_secret, "acceptance:write", "isolated-test-verifier"),
             payload=decision,
         )
         assert status == 201

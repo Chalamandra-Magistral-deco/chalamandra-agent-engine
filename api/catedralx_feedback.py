@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from api import acceptance_store, candidate_store, crypto_signer
+from api.locking import acquire_exclusive_lock
 
 
 def _catedralx_root() -> Path:
@@ -92,7 +93,8 @@ def reconcile_feedback_once(
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a", encoding="utf-8") as lock_stream:
-        fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+        # F-7: espera acotada (antes LOCK_EX sin timeout).
+        acquire_exclusive_lock(lock_stream.fileno())
         try:
             records = _read_acceptances(Path(acceptance_file))
             for record in records:

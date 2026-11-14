@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from api.locking import (
+    DEFAULT_TRACE_LOCK_TIMEOUT_SECONDS,
+    acquire_exclusive_lock,
+)
+
 _LOCK = threading.Lock()
 _LAST_SYNC = 0.0
 _SYNC_INTERVAL_SECONDS = 1.0
@@ -56,8 +61,16 @@ def record_request(
     path: str,
     status: int | None,
     client_ip: str,
+    candidate_id: str | None = None,
+    decision_id: str | None = None,
 ) -> None:
-    """Persist safe request metadata atomically enough for concurrent handlers."""
+    """Persist safe request metadata atomically enough for concurrent handlers.
+
+    C-6: cuando el handler conoce el candidato o la decisión que sirvió la
+    petición, se registran como `candidate_id`/`decision_id` para que una
+    traza se reconstruya sin cruzar cuatro fuentes. Solo se incluyen cuando
+    se conocen; el resto de registros conserva su forma anterior.
+    """
     if not trace_id or not method or not path.startswith("/"):
         raise ValueError("trace_id, method y path válidos son obligatorios")
     record: dict[str, Any] = {
@@ -70,6 +83,10 @@ def record_request(
         "status": status,
         "client_ip": client_ip,
     }
+    if candidate_id is not None:
+        record["candidate_id"] = candidate_id
+    if decision_id is not None:
+        record["decision_id"] = decision_id
     target = _trace_file()
     encoded = json.dumps(
         record, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
@@ -86,7 +103,12 @@ def record_request(
             os.chmod(target, 0o600)
             _TRACE_TARGET_READY = target_key
         with target.open("a", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            # F-7: espera acotada (antes LOCK_EX sin timeout). log_message
+            # captura OSError, y TimeoutError lo es: la traza se pierde de
+            # forma observable en lugar de colgar la respuesta HTTP.
+            acquire_exclusive_lock(
+                stream.fileno(), timeout_seconds=DEFAULT_TRACE_LOCK_TIMEOUT_SECONDS
+            )
             try:
                 stream.write(encoded)
                 stream.flush()
