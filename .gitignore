@@ -31,3 +31,6 @@ config/.env
 *.env.save.*
 config/*.save
 config/*.save.*
+
+# Backups versionados fuera de las rutas activas
+_trash/

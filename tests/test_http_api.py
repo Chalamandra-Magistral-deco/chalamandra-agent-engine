@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from api.server import create_server
+from api.server import create_server, _is_loopback_host
 from api import task_bus
 from core.master import Master
 from api.safe_http import ResolvedWebhookTarget
@@ -19,6 +19,18 @@ from api.safe_http import ResolvedWebhookTarget
 TEST_TOKEN = "test-api-token"
 TEST_JWT_SECRET = "jwt-secret-para-produccion-de-32-bytes-minimo"
 TEST_MAGIS_JWT_SECRET = "magis-service-test-secret-distinto-y-largo-32-bytes"
+
+def test_container_wildcard_bind_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ALLOW_CONTAINER_BIND", raising=False)
+    assert _is_loopback_host("127.0.0.1") is True
+    assert _is_loopback_host("0.0.0.0") is False
+
+    monkeypatch.setenv("ALLOW_CONTAINER_BIND", "true")
+    assert _is_loopback_host("0.0.0.0") is True
+
+    monkeypatch.setenv("ALLOW_CONTAINER_BIND", "false")
+    assert _is_loopback_host("0.0.0.0") is False
+
 
 def make_jwt(scopes="jobs:write jobs:read results:read orchestration:run orchestration:read") -> str:
     import time
@@ -123,6 +135,36 @@ def test_v1_request_authenticates_enqueues_and_persists_w3c_trace(local_api, tmp
     assert traced[0]["traceparent"] == traceparent
     assert traced[0]["status"] == 202
     assert "query-secret" not in trace_file.read_text()
+
+
+def test_authorization_requires_one_well_formed_bearer_token(local_api):
+    port, _ = local_api
+    valid_token = make_jwt(scopes="jobs:read")
+    for authorization in (
+        f"Basic {valid_token}",
+        f"Bearer  {valid_token}",
+        f"Bearer Bearer {valid_token}",
+        f"Bearer {valid_token} extra",
+    ):
+        status, body = request(
+            port,
+            "/v1/inspect",
+            headers={"Authorization": authorization},
+        )
+        assert status == 401
+        assert body["error"] == "unauthorized"
+
+    # Duplicate Authorization fields are ambiguous and must never be accepted.
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection.putrequest("GET", "/v1/inspect")
+    connection.putheader("Authorization", f"Bearer {valid_token}")
+    connection.putheader("Authorization", "Bearer invalid-second-token")
+    connection.endheaders()
+    response = connection.getresponse()
+    response_body = json.loads(response.read().decode("utf-8"))
+    connection.close()
+    assert response.status == 401
+    assert response_body["error"] == "unauthorized"
 
 
 def test_v1_request_requires_auth_and_idempotency_key(local_api):
