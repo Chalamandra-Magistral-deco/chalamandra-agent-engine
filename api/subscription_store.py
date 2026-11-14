@@ -12,10 +12,11 @@ from urllib.parse import urlsplit
 
 from api.safe_http import ResolvedWebhookTarget
 from api.jsonl_index import JsonlIndex
+from api.state_dir import agents_state_dir
 
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
 
 
 def _subs_file() -> Path:

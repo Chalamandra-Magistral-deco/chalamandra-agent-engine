@@ -301,7 +301,7 @@ def test_payload_size_and_content_type_are_limited(local_api):
     assert result["error"] == "content_type_must_be_json"
 
 
-def test_token_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
+def test_jwt_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
     server = create_server("127.0.0.1", 0, master=Master())
@@ -338,12 +338,18 @@ def test_non_loopback_requires_token(monkeypatch: pytest.MonkeyPatch):
         create_server("0.0.0.0", 0)
 
 
-def test_model_calls_require_token_even_on_loopback(monkeypatch: pytest.MonkeyPatch):
+def test_model_calls_start_without_api_token(monkeypatch: pytest.MonkeyPatch):
+    # CHALAMANDRA_API_TOKEN era una credencial muerta: create_server lo exigía
+    # para habilitar llamadas a modelos, pero ningún endpoint lo leía (la
+    # autenticación real es JWT con scopes). El arranque ya no lo exige.
     monkeypatch.delenv("CHALAMANDRA_API_TOKEN", raising=False)
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
 
-    with pytest.raises(ValueError, match="CHALAMANDRA_API_TOKEN"):
-        create_server("127.0.0.1", 0)
+    server = create_server("127.0.0.1", 0)
+    try:
+        assert server.model_calls_enabled is True
+    finally:
+        server.server_close()
 
 
 def test_internal_run_status_requires_orchestration_read_scope(local_api, monkeypatch):

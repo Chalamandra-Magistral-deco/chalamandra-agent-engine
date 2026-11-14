@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from api.crypto_signer import verify_decision
 from api.jsonl_index import JsonlIndex
+from api.state_dir import agents_state_dir
 
 _CANONICAL_FIELDS = (
     "decision_id", "candidate_id", "outcome", "criteria_checked", "reasons",
@@ -21,7 +22,7 @@ _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
 
 
 def _acceptance_file() -> Path:

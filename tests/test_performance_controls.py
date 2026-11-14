@@ -36,6 +36,11 @@ def test_task_queue_queries_use_partial_indexes(tmp_path, monkeypatch):
     assert "idx_tasks_run_created" in " ".join(str(row) for row in by_run)
 
 
+def _without_digest(record):
+    """Stored records carry integrity fields; compare the candidate payload."""
+    return {k: v for k, v in record.items() if k not in {"record_digest", "record_digest_alg"}}
+
+
 def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch):
     monkeypatch.setattr(candidate_store, "_state_dir", lambda: tmp_path)
     candidate = {"candidate_id": "candidate-1", "status": "candidate", "revision": 1}
@@ -43,7 +48,7 @@ def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch)
     candidate_store.save_candidate(candidate)
 
     found = candidate_store.get_candidate("candidate-1")
-    assert found == candidate
+    assert _without_digest(found) == candidate
     path = candidate_store._candidates_file()
     assert len(path.read_text(encoding="utf-8").splitlines()) == 1
 

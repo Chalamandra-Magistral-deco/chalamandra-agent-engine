@@ -88,13 +88,11 @@ class EngineHTTPServer(ThreadingHTTPServer):
         handler_class: type[BaseHTTPRequestHandler],
         *,
         master: Master | None = None,
-        api_token: str | None = None,
         model_calls_enabled: bool = False,
         magis_execution_enabled: bool = False,
     ) -> None:
         host = str(server_address[0])
         self.host_is_loopback = _is_loopback_host(host)
-        self.api_token = api_token.strip() if api_token and api_token.strip() else None
         self.model_calls_enabled = model_calls_enabled
         self.magis_execution_enabled = magis_execution_enabled
         self.master = master or Master()
@@ -1217,7 +1215,6 @@ def create_server(
     if not 0 <= bind_port <= 65535:
         raise ValueError("CHALAMANDRA_API_PORT fuera de rango")
 
-    token = os.getenv("CHALAMANDRA_API_TOKEN", "").strip() or None
     model_calls_enabled = os.getenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -1231,10 +1228,6 @@ def create_server(
             "La API solo puede enlazarse a loopback; para acceso remoto usa un túnel "
             "autenticado o proxy TLS, no HTTP directo."
         )
-    if model_calls_enabled and token is None:
-        raise ValueError(
-            "CHALAMANDRA_API_TOKEN es obligatorio al habilitar llamadas a modelos"
-        )
     if magis_execution_enabled and len(magis_secret) < 32:
         raise ValueError(
             "CHALAMANDRA_MAGIS_JWT_SECRET de al menos 32 caracteres es obligatorio al habilitar MAGIS"
@@ -1244,7 +1237,6 @@ def create_server(
         (bind_host, bind_port),
         EngineRequestHandler,
         master=master,
-        api_token=token,
         model_calls_enabled=model_calls_enabled,
         magis_execution_enabled=magis_execution_enabled,
     )

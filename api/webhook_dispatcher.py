@@ -13,10 +13,11 @@ from pathlib import Path
 from api import distribution_store, subscription_store
 from api.safe_http import PinnedWebhookError, post_json
 from api.trace_parser import parse_traceparent
+from api.state_dir import agents_state_dir
 
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
 
 
 def _dead_letter_file() -> Path:

@@ -4,11 +4,12 @@ import os
 import sqlite3
 import threading
 import uuid
+from api.state_dir import agents_state_dir
 from datetime import datetime, timezone
 from pathlib import Path
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
 
 def _db_path() -> Path:
     path = _state_dir() / "tasks.db"

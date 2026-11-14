@@ -1,13 +1,66 @@
 """Append-only CandidateResult projection with an indexed JSONL ledger."""
 import hashlib
+import hmac
 import json
+import os
 from pathlib import Path
 
 from api.jsonl_index import JsonlIndex
+from api.state_dir import agents_state_dir
 
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
+
+
+def _digest_key() -> bytes | None:
+    raw = os.getenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "").strip()
+    if not raw:
+        return None
+    if len(raw) == 64 and all(c in "0123456789abcdefABCDEF" for c in raw):
+        return bytes.fromhex(raw)
+    return raw.encode("utf-8")
+
+
+def _record_digest_fields(record: dict) -> tuple[str, str]:
+    """Digest over the whole record (minus the digest fields themselves).
+
+    HMAC-SHA256 when CHALAMANDRA_CANDIDATE_HMAC_KEY is set; plain SHA-256
+    otherwise. Plain SHA-256 detects accidental edits and corruption, not
+    an attacker who recomputes the digest; production must set the key.
+    Rotating the key invalidates digests written under the old key (reads
+    then fail closed); re-signing on rotation is not implemented yet.
+    """
+    body = {
+        key: value
+        for key, value in record.items()
+        if key not in {"record_digest", "record_digest_alg"}
+    }
+    serialized = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    key = _digest_key()
+    if key is None:
+        return "sha256", hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return "hmac-sha256", hmac.new(key, serialized.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_record_digest(record: dict) -> None:
+    digest = record.get("record_digest")
+    alg = record.get("record_digest_alg")
+    if digest is None and alg is None:
+        return  # Legacy record written before digests existed.
+    if not isinstance(digest, str) or not isinstance(alg, str):
+        raise ValueError("candidate record_digest inválido")
+    expected_alg, expected = _record_digest_fields(record)
+    if alg != expected_alg or not hmac.compare_digest(digest, expected):
+        raise ValueError(
+            "candidate record integrity check failed: record_digest no coincide"
+        )
 
 
 def _candidates_file() -> Path:
@@ -27,8 +80,12 @@ def _serialize_candidate(candidate: dict) -> str:
 
 
 def _save_candidate(candidate: dict) -> tuple[str, bool]:
-    serialized = _serialize_candidate(candidate)
-    candidate_id = candidate.get("candidate_id")
+    stored = dict(candidate)
+    alg, digest = _record_digest_fields(stored)
+    stored["record_digest"] = digest
+    stored["record_digest_alg"] = alg
+    serialized = _serialize_candidate(stored)
+    candidate_id = stored.get("candidate_id")
     if not isinstance(candidate_id, str) or not candidate_id.strip():
         raise ValueError("candidate_id requerido")
 
@@ -42,7 +99,7 @@ def _save_candidate(candidate: dict) -> tuple[str, bool]:
                     "candidate_id conflict: existing candidate has different content"
                 )
             return candidate_id, False
-        store.append(db, candidate)
+        store.append(db, stored)
     return candidate_id, True
 
 
@@ -109,7 +166,14 @@ def get_candidate(candidate_id: str) -> dict | None:
     store = JsonlIndex(_candidates_file(), ("candidate_id",))
     with store.locked() as db:
         matches = store.find(db, "candidate_id", candidate_id)
-        return matches[-1] if matches else None
+        if not matches:
+            return None
+        record = matches[-1]
+        # Fail-closed: a tampered record never reaches acceptance or delivery.
+        # record_acceptance() and get_acceptance() read through here, so the
+        # integrity check also covers the acceptance re-verification path.
+        _verify_record_digest(record)
+        return record
 
 
 def compute_evidence_digest(candidate: dict) -> str:
