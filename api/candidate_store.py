@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 
 from api.jsonl_index import JsonlIndex
