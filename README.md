@@ -14,6 +14,17 @@ Motor Python de agentes y herramientas de Chalamandra Magistral. Es una bibliote
 - `tools/`: utilidades auxiliares de inspección; `agente_elite.py` es de solo lectura y no forma parte de la imagen de producción.
 - `tests/`: pruebas unitarias e integración simulada.
 
+## Coordinación central y conexión con CatedralX
+
+**Agents coordina el sistema.** `Master` centraliza planificación, descomposición, selección de perfiles, enrutamiento de modelos y ejecución mediada por el host. `Master.inspect()` expone el contrato de coordinación y `Master.plan()` lo incluye junto con el agente, modelo y herramientas permitidas de cada subtarea.
+
+CatedralX conserva el razonamiento estratégico y predictivo. Hay dos rutas existentes y distintas:
+
+1. **Análisis mediante herramienta:** una subtarea especializada se enruta al perfil `analyst`; su allowlist puede incluir `catedralx_reasoning`. El handler es de análisis de precios y no equivale a la evaluación económica gobernada.
+2. **Evaluación económica canónica:** `POST /v1/request` valida el objetivo explícito `catedralx_economic_evaluation`, permisos, procedencia y contrato; Agents la coloca en TaskBus y el worker ejecuta el adaptador canónico de CatedralX. Este recorrido determinista no invoca el planner/LLM de `Master`: evita que un modelo reinterprete o fabrique entradas del contrato económico. El worker preserva `DecisionResult`, `trace_id` y evidencia, y publica solo un candidato sujeto a aceptación independiente.
+
+Membrana no se presupone como proceso separado: sus controles se aplican en las fronteras existentes de API, contratos, TaskBus, worker, stores y verificador. La autorización humana y la aceptación independiente siguen siendo requisitos distintos.
+
 ## Agentes especializados
 
 `Agents` es el coordinador central del sistema: recibe objetivos, descompone y enruta tareas, asigna perfiles y herramientas autorizadas, gestiona dependencias y consolida resultados. Dentro de este motor, `core/agent_registry.py` define perfiles de ejecución, incluido `coordinator` (perfil interno de coordinación de tareas), además de `engineer`, `auditor`, `sentinel` y `analyst`. El perfil `coordinator` no convierte a CatedralX en coordinador del ecosistema. `Master.inspect()` enumera perfiles y `Master.route_agent()` permite inspeccionar asignaciones antes de ejecutar.
