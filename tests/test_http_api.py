@@ -338,6 +338,12 @@ def test_non_loopback_requires_token(monkeypatch: pytest.MonkeyPatch):
         create_server("0.0.0.0", 0)
 
 
+def test_api_startup_requires_candidate_hmac_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
+    with pytest.raises(ValueError, match="CHALAMANDRA_CANDIDATE_HMAC_KEY"):
+        create_server("127.0.0.1", 0)
+
+
 def test_model_calls_start_without_api_token(monkeypatch: pytest.MonkeyPatch):
     # CHALAMANDRA_API_TOKEN era una credencial muerta: create_server lo exigía
     # para habilitar llamadas a modelos, pero ningún endpoint lo leía (la
