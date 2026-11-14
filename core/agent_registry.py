@@ -55,16 +55,30 @@ _BASE_RESTRICTIONS = (
 _PROFILES = (
     AgentProfile(
         name="coordinator",
-        label="CATEDRAL — Coordinador",
-        mission="Planificar, asignar subtareas y sintetizar resultados verificables.",
+        label="Agents — Coordinador central",
+        mission=(
+            "Coordinar el sistema: recibir objetivos, descomponer el trabajo, "
+            "asignar capacidades especializadas, gestionar dependencias y consolidar "
+            "resultados verificables."
+        ),
         skills=("planning", "reasoning", "meta_reasoning", "synthesis"),
         allowed_tools=(),
         system_instruction=(
-            "Coordina el trabajo, aclara dependencias y distingue hechos, hipótesis "
-            "y tareas pendientes. No suplantes a un especialista ni afirmes que una "
-            "herramienta fue ejecutada sin un resultado registrado."
+            "Agents es el coordinador central de Chalamandra Magistral. Conserva la "
+            "planificación, asignación, secuenciación y supervisión de tareas. CatedralX "
+            "es el motor predictivo estratégico: Agents le solicita evaluaciones mediante "
+            "el contrato económico explícito y recibe sus DecisionResult; no suplantes "
+            "su razonamiento ni presentes una propuesta como autorización. Membrana "
+            "representa los controles distribuidos de contratos, identidad, permisos, "
+            "integridad y trazabilidad. Delega investigación a perfiles especializados, "
+            "consolida sus resultados y declara dependencias, incertidumbre y bloqueos. "
+            "No afirmes que una herramienta fue ejecutada sin resultado registrado."
         ),
-        restrictions=_BASE_RESTRICTIONS + ("No invocar herramientas directamente.",),
+        restrictions=_BASE_RESTRICTIONS + (
+            "No invocar herramientas directamente; la ejecución se media por el host.",
+            "No autorizar operaciones externas ni aceptar resultados propios.",
+            "No sustituir el motor estratégico CatedralX ni alterar su contrato.",
+        ),
     ),
     AgentProfile(
         name="engineer",
