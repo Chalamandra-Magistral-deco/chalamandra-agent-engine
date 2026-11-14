@@ -154,6 +154,18 @@ def test_authorization_requires_one_well_formed_bearer_token(local_api):
         assert status == 401
         assert body["error"] == "unauthorized"
 
+    # Duplicate Authorization fields are ambiguous and must never be accepted.
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection.putrequest("GET", "/v1/inspect")
+    connection.putheader("Authorization", f"Bearer {valid_token}")
+    connection.putheader("Authorization", "Bearer invalid-second-token")
+    connection.endheaders()
+    response = connection.getresponse()
+    response_body = json.loads(response.read().decode("utf-8"))
+    connection.close()
+    assert response.status == 401
+    assert response_body["error"] == "unauthorized"
+
 
 def test_v1_request_requires_auth_and_idempotency_key(local_api):
     port, _ = local_api
