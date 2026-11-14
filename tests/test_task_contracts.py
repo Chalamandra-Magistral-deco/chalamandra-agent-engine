@@ -275,6 +275,7 @@ def _opportunity_payload(trace_id="abcdefabcdefabcdefabcdefabcdefab"):
         "opportunity_id": "opp-test-01",
         "name": "Servicio digital",
         "category": "digital_service",
+        "income_model": "hybrid",
         "currency": "MXN",
         "horizon_months": 12,
         "capital_required": 5000,

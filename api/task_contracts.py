@@ -26,7 +26,7 @@ _OPPORTUNITY_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 
 def _opportunity_payload_error(payload: dict[str, Any]) -> str | None:
     required = {
-        "opportunity_id", "name", "category", "currency", "horizon_months",
+        "opportunity_id", "name", "category", "income_model", "currency", "horizon_months",
         "capital_required", "available_capital", "revenue", "costs",
         "evidence", "assumptions", "scenarios", "trace_id",
     }
@@ -36,6 +36,8 @@ def _opportunity_payload_error(payload: dict[str, Any]) -> str | None:
     for field in ("opportunity_id", "name", "category"):
         if not isinstance(payload.get(field), str) or not payload[field].strip():
             return f"opportunity_invalid_{field}"
+    if payload.get("income_model") not in {"active", "passive", "hybrid", "investment", "asset"}:
+        return "opportunity_income_model_invalid"
     if not isinstance(payload.get("currency"), str) or not re.fullmatch(r"[A-Z]{3}", payload["currency"]):
         return "opportunity_currency_must_be_iso4217"
     if type(payload.get("horizon_months")) is not int or not 1 <= payload["horizon_months"] <= 120:
