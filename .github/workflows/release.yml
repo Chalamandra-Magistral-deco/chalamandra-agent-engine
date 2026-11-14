@@ -110,6 +110,12 @@ jobs:
             --build-arg CATEDRALX_CODE_DIRTY=false \
             --file deploy/Dockerfile .
 
+      - name: Build worker image (fail closed)
+        run: |
+          docker build --tag chalamandra-worker:ci \
+            --build-arg AGENTS_BASE_IMAGE=chalamandra-agents:ci \
+            --file deploy/Dockerfile.worker .
+
       - name: Verify image provenance labels
         shell: bash
         run: |
@@ -128,34 +134,56 @@ jobs:
         run: |
           docker run --rm --entrypoint python chalamandra-agents:ci -c 'import sys; sys.path.insert(0, "/app/CatedralX/elite"); import psutil; import cryptography; import REASON.razon; import FEX.GOVERNANCE.economic_cycle; from REASON.core_contract import evaluate_economic_opportunity; from AEX.DECISION import ordenes; print("CatedralX modules OK; psutil", psutil.__version__, "cryptography", cryptography.__version__)'
 
-      - name: Start container and verify its health check
+      - name: Start API and worker containers and verify both health checks
         shell: bash
         run: |
           set -euo pipefail
-          # Disposable CI-only key; never use this value outside the test job.
-          docker run --detach --name chalamandra-agents-ci \
-            --env CHALAMANDRA_CANDIDATE_HMAC_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+          # Disposable CI-only key shared by both containers; never use outside CI.
+          integrity_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          docker network create chalamandra-agents-ci
+          docker volume create chalamandra-agents-ci-state
+          docker run --detach --name chalamandra-agents-api-ci \
+            --network chalamandra-agents-ci \
+            --publish 127.0.0.1:8766:8766 \
+            --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
+            --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
             chalamandra-agents:ci
-          for ((attempt = 1; attempt <= 30; attempt++)); do
-            status="$(docker inspect --format='{{.State.Health.Status}}' chalamandra-agents-ci)"
-            if [[ "$status" == "healthy" ]]; then
-              echo "Container health check passed."
-              exit 0
-            fi
-            if [[ "$status" == "unhealthy" ]]; then
-              docker logs chalamandra-agents-ci
+          docker run --detach --name chalamandra-agents-worker-ci \
+            --network chalamandra-agents-ci \
+            --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
+            --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            chalamandra-worker:ci
+          for container in chalamandra-agents-api-ci chalamandra-agents-worker-ci; do
+            healthy=false
+            for ((attempt = 1; attempt <= 30; attempt++)); do
+              status="$(docker inspect --format='{{.State.Health.Status}}' "$container")"
+              if [[ "$status" == "healthy" ]]; then
+                echo "$container health check passed."
+                healthy=true
+                break
+              fi
+              if [[ "$status" == "unhealthy" ]]; then
+                docker logs "$container"
+                exit 1
+              fi
+              sleep 2
+            done
+            if [[ "$healthy" != "true" ]]; then
+              docker logs "$container"
+              echo "$container did not become healthy within 60 seconds." >&2
               exit 1
             fi
-            sleep 2
           done
-          docker logs chalamandra-agents-ci
-          echo "Container did not become healthy within 60 seconds." >&2
-          exit 1
 
       - name: Print container logs on failure
         if: failure()
-        run: docker logs chalamandra-agents-ci || true
+        run: |
+          docker logs chalamandra-agents-api-ci || true
+          docker logs chalamandra-agents-worker-ci || true
 
-      - name: Remove smoke-test container
+      - name: Remove smoke-test containers and shared state
         if: always()
-        run: docker rm --force chalamandra-agents-ci || true
+        run: |
+          docker rm --force chalamandra-agents-api-ci chalamandra-agents-worker-ci || true
+          docker volume rm chalamandra-agents-ci-state || true
+          docker network rm chalamandra-agents-ci || true
