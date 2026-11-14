@@ -418,8 +418,12 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         assert candidate_result["decision_result"]["trace_id"] == trace_id
 
         candidate_id = candidate_result["candidate_id"]
+        publication_deadline = time.monotonic() + 5
         persisted = candidate_store.get_candidate(candidate_id)
-        assert persisted is not None
+        while persisted is None and time.monotonic() < publication_deadline:
+            time.sleep(0.05)
+            persisted = candidate_store.get_candidate(candidate_id)
+        assert persisted is not None, "Worker completed the task but did not publish its candidate"
         assert persisted["evidence"]
         assert persisted["decision_result"]["evaluation_hash"]
         assert acceptance_store.get_acceptance(candidate_id) is None
