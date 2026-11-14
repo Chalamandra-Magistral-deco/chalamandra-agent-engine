@@ -153,7 +153,6 @@ def test_state_dir_override_moves_all_ledgers(tmp_path, monkeypatch):
     monkeypatch.setattr(task_bus, "_state_dir", agents_state_dir)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CHALAMANDRA_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
     candidate_store.save_candidate(_candidate())
     task_bus.enqueue_task({"objective": "state-dir probe"})
     agents_dir = tmp_path / "state" / "agents"
