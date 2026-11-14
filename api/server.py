@@ -37,10 +37,9 @@ MAX_TASK_CHARS = 8_000
 
 
 def _is_loopback_host(host: str) -> bool:
-    # Permite 0.0.0.0 en contenedor si se pide explícitamente
-    if host == "0.0.0.0" and os.getenv("ALLOW_CONTAINER_BIND") == "true":
+    """Allow loopback, plus explicit wildcard binding inside a controlled container."""
+    if host == "0.0.0.0" and os.getenv("ALLOW_CONTAINER_BIND", "").strip().lower() == "true":
         return True
-    """Only treat explicit loopback addresses/names as safe for no-token mode."""
     if host.casefold() == "localhost":
         return True
     try:
@@ -184,8 +183,20 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if not require_token:
             return True
         import jwt
-        auth = self.headers.get("Authorization", "")
-        token = auth.replace("Bearer ", "").strip()
+        authorization_values = self.headers.get_all("Authorization", [])
+        if len(authorization_values) != 1:
+            return False
+        auth = authorization_values[0]
+        scheme, separator, credentials = auth.partition(" ")
+        if (
+            not separator
+            or scheme.casefold() != "bearer"
+            or not credentials
+            or credentials != credentials.strip()
+            or any(character.isspace() for character in credentials)
+        ):
+            return False
+        token = credentials
         secret_env = {
             "catedralx-service": "CHALAMANDRA_CATEDRALX_JWT_SECRET",
             "magis-service": "CHALAMANDRA_MAGIS_JWT_SECRET",
