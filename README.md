@@ -16,7 +16,7 @@ Motor Python de agentes y herramientas de Chalamandra Magistral. Es una bibliote
 
 ## Agentes especializados
 
-`core/agent_registry.py` define cinco perfiles deterministas: `coordinator` (CATEDRAL), `engineer`, `auditor`, `sentinel` y `analyst`. El enrutamiento clasifica subtareas usando su descripción y skill; `Master.inspect()` enumera los perfiles y `Master.route_agent()` permite inspeccionar una asignación antes de ejecutar.
+`Agents` es el coordinador central del sistema: recibe objetivos, descompone y enruta tareas, asigna perfiles y herramientas autorizadas, gestiona dependencias y consolida resultados. Dentro de este motor, `core/agent_registry.py` define perfiles de ejecución, incluido `coordinator` (perfil interno de coordinación de tareas), además de `engineer`, `auditor`, `sentinel` y `analyst`. El perfil `coordinator` no convierte a CatedralX en coordinador del ecosistema. `Master.inspect()` enumera perfiles y `Master.route_agent()` permite inspeccionar asignaciones antes de ejecutar.
 
 `Executor` incluye el perfil asignado y sus herramientas autorizadas en el resultado y los metadatos de la solicitud. La lista de herramientas se filtra contra las herramientas registradas. `Master.execute_agent_tool_call(agent, {"name": ..., "arguments": {...}})` valida la forma de la llamada, que la herramienta esté registrada, que el perfil tenga permiso y que los argumentos encajen con la firma del handler antes de ejecutarlo. `Master.execute_agent_tool(agent, tool, ...)` se conserva como adaptador compatible a esa interfaz. `Master.execute_tool(...)` es una interfaz de confianza para el código anfitrión, no debe exponerse directamente a modelos ni a contenido no confiable.
 
