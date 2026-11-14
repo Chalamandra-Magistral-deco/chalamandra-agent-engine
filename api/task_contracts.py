@@ -19,6 +19,115 @@ FINANCIAL_MARKET_ANALYSIS = "financial_market_analysis"
 CATEDRALX_ECONOMIC_EVALUATION = "catedralx_economic_evaluation"
 CATEDRALX_ECONOMIC_PROPOSAL_REVIEW = "catedralx_economic_proposal_review"
 
+CATEDRALX_OPPORTUNITY_EVALUATION = "catedralx_opportunity_evaluation"
+_OPPORTUNITY_TRACE_RE = re.compile(r"^[0-9a-f]{32}$")
+_OPPORTUNITY_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _opportunity_payload_error(payload: dict[str, Any]) -> str | None:
+    required = {
+        "opportunity_id", "name", "category", "income_model", "currency", "horizon_months",
+        "capital_required", "available_capital", "revenue", "costs",
+        "evidence", "assumptions", "scenarios", "trace_id",
+    }
+    missing = sorted(required - set(payload))
+    if missing:
+        return "opportunity_missing_fields:" + ",".join(missing)
+    for field in ("opportunity_id", "name", "category"):
+        if not isinstance(payload.get(field), str) or not payload[field].strip():
+            return f"opportunity_invalid_{field}"
+    if payload.get("income_model") not in {"active", "passive", "hybrid", "investment", "asset"}:
+        return "opportunity_income_model_invalid"
+    if not isinstance(payload.get("currency"), str) or not re.fullmatch(r"[A-Z]{3}", payload["currency"]):
+        return "opportunity_currency_must_be_three_uppercase_letters"
+    if type(payload.get("horizon_months")) is not int or not 1 <= payload["horizon_months"] <= 120:
+        return "opportunity_horizon_months_invalid"
+    trace = payload.get("trace_id")
+    if not isinstance(trace, str) or not _OPPORTUNITY_TRACE_RE.fullmatch(trace) or trace == "0" * 32:
+        return "opportunity_trace_id_invalid"
+    for field in ("capital_required", "available_capital"):
+        value = payload.get(field)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"opportunity_{field}_invalid"
+        try:
+            if not math.isfinite(float(value)) or float(value) < 0:
+                return f"opportunity_{field}_invalid"
+        except (TypeError, ValueError, OverflowError):
+            return f"opportunity_{field}_invalid"
+    evidence = payload.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return "opportunity_evidence_required"
+    evidence_ids = set()
+    for item in evidence:
+        if not isinstance(item, dict):
+            return "opportunity_evidence_item_invalid"
+        identifier, source, digest, observed_at = (
+            item.get("evidence_id"), item.get("source"),
+            item.get("digest"), item.get("observed_at"),
+        )
+        if not isinstance(identifier, str) or not identifier.strip() or identifier in evidence_ids:
+            return "opportunity_evidence_id_invalid"
+        if not isinstance(source, str) or not source.strip():
+            return "opportunity_evidence_source_required"
+        if not isinstance(digest, str) or not _OPPORTUNITY_DIGEST_RE.fullmatch(digest):
+            return "opportunity_evidence_digest_invalid"
+        if not isinstance(observed_at, str) or not observed_at.strip():
+            return "opportunity_evidence_observed_at_required"
+        try:
+            parsed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return "opportunity_evidence_observed_at_invalid"
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return "opportunity_evidence_observed_at_requires_timezone"
+        evidence_ids.add(identifier)
+    for field in ("revenue", "costs"):
+        lines = payload.get(field)
+        if not isinstance(lines, list) or not lines:
+            return f"opportunity_{field}_required"
+        for item in lines:
+            if not isinstance(item, dict):
+                return f"opportunity_{field}_item_invalid"
+            amount = item.get("amount")
+            if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                return f"opportunity_{field}_amount_invalid"
+            try:
+                if not math.isfinite(float(amount)) or float(amount) < 0:
+                    return f"opportunity_{field}_amount_invalid"
+            except (TypeError, ValueError, OverflowError):
+                return f"opportunity_{field}_amount_invalid"
+            if item.get("frequency") not in {"one_time", "monthly", "quarterly", "annual"}:
+                return f"opportunity_{field}_frequency_invalid"
+            if item.get("evidence_id") not in evidence_ids:
+                return f"opportunity_{field}_evidence_reference_invalid"
+    assumptions = payload.get("assumptions")
+    if not isinstance(assumptions, list) or not assumptions or any(
+        not isinstance(value, str) or not value.strip() for value in assumptions
+    ):
+        return "opportunity_assumptions_required"
+    scenarios = payload.get("scenarios")
+    if not isinstance(scenarios, list) or len(scenarios) != 3:
+        return "opportunity_requires_three_scenarios"
+    names = set()
+    for item in scenarios:
+        if not isinstance(item, dict) or item.get("name") not in {"conservative", "base", "optimistic"}:
+            return "opportunity_scenario_name_invalid"
+        if item["name"] in names:
+            return "opportunity_scenario_duplicate"
+        names.add(item["name"])
+        for field in ("revenue_multiplier", "cost_multiplier"):
+            value = item.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return f"opportunity_{field}_invalid"
+            try:
+                if not math.isfinite(float(value)) or float(value) <= 0:
+                    return f"opportunity_{field}_invalid"
+            except (TypeError, ValueError, OverflowError):
+                return f"opportunity_{field}_invalid"
+    if names != {"conservative", "base", "optimistic"}:
+        return "opportunity_scenario_set_incomplete"
+    return None
+
+
 _MARKET_REQUIRED = {"historical_prices", "current_price", "observed_at", "source"}
 _DYNAMIC_ALLOWED = {
     "reinvestment_surplus", "entropy_rate", "entropy_time_scale", "loop_gain",
@@ -124,6 +233,9 @@ def validate_task_contract(objective: str, payload: Any) -> str | None:
 
     if task_type == FINANCIAL_MARKET_ANALYSIS:
         return _market_payload_error(payload)
+
+    if task_type == CATEDRALX_OPPORTUNITY_EVALUATION:
+        return _opportunity_payload_error(payload)
 
     if task_type == CATEDRALX_ECONOMIC_EVALUATION:
         market_error = _market_payload_error(payload)

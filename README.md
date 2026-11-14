@@ -220,3 +220,8 @@ Las pruebas predeterminadas no llaman a proveedores de nube ni generan gasto por
 - Una habilidad solo se marca como verificada cuando existe evidencia local de prueba; las capacidades declaradas por un proveedor no elevan por sí solas el estado.
 - La herramienta `search_term_miner` nunca escribe en Google Ads. Solo lee el CSV contenido en el directorio permitido y devuelve recomendaciones candidatas.
 - Los límites de paso y los valores no finitos de la simulación se validan antes de calcular para reducir el riesgo de asignaciones excesivas o trayectorias inválidas.
+
+
+### Evaluación económica de oportunidades
+
+El objetivo `catedralx_opportunity_evaluation` es independiente de `catedralx_economic_evaluation` (mercado). No exige precios históricos. Requiere ingresos, costos, capital requerido/disponible, horizonte, moneda, modelo de ingreso (`active`, `passive`, `hybrid`, `investment` o `asset`), supuestos, evidencia referenciada y escenarios explícitos conservador/base/optimista. Agents envía la tarea al contrato determinista de CatedralX y conserva el resultado en `economic_assessment`, separado de `DecisionResult`. La salida es solo analítica: no autoriza, no ejecuta órdenes y requiere aceptación independiente.
