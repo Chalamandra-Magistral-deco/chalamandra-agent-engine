@@ -183,7 +183,10 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         if not require_token:
             return True
         import jwt
-        auth = self.headers.get("Authorization", "")
+        authorization_values = self.headers.get_all("Authorization", [])
+        if len(authorization_values) != 1:
+            return False
+        auth = authorization_values[0]
         scheme, separator, credentials = auth.partition(" ")
         if (
             not separator
