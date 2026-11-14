@@ -199,7 +199,10 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
                     "Produce an analysis-only candidate requiring independent acceptance.",
                 ],
             },
-            headers={"Idempotency-Key": "synthetic-opportunity-e2e-001"},
+            headers={
+                "Idempotency-Key": "synthetic-opportunity-e2e-001",
+                "traceparent": f"00-{TRACE_ID}-0123456789abcdef-01",
+            },
         )
         assert status == 202, queued
         assert queued["status"] == "queued"
