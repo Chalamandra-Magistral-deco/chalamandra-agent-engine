@@ -63,6 +63,17 @@ async def test_master_exposes_agents_and_routes_tasks() -> None:
     assert routed["name"] == "analyst"
     assert "catedralx_reasoning" in routed["allowed_tools"]
 
+    coordination = state["coordination"]
+    assert coordination["coordinator"] == "Agents"
+    assert coordination["strategic_engine"] == "CatedralX"
+    assert coordination["governance_boundary"] == "Membrana"
+    assert coordination["human_authorization_required"] is True
+    assert coordination["independent_acceptance_required"] is True
+
+    coordinator = master.agent_registry.get("coordinator")
+    assert coordinator.label == "Agents — Coordinador central"
+    assert coordinator.allowed_tools == ()
+
 
 @pytest.mark.asyncio
 async def test_agent_tool_permissions_are_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -216,3 +227,31 @@ def test_read_only_audit_routes_to_auditor_before_implementation_keyword(
     description: str, skill: str, expected: str
 ) -> None:
     assert AgentRegistry().route(description, skill).name == expected
+
+
+
+@pytest.mark.asyncio
+async def test_master_plan_declares_agents_and_routes_strategy_to_specialist() -> None:
+    from core.decomposer import Subtask
+
+    master = Master()
+
+    class FakeDecomposer:
+        async def decompose(self, task):
+            return [
+                Subtask(
+                    id="strategy-1",
+                    description="Analizar precios EUR/USD y volatilidad",
+                    skill="analysis",
+                    depends_on=[],
+                )
+            ]
+
+    master.decomposer = FakeDecomposer()
+    plan = await master.plan("Evaluar el mercado EUR/USD")
+
+    assert plan["coordinator"] == "Agents"
+    assert plan["coordination"]["strategic_engine"] == "CatedralX"
+    assert plan["subtask_count"] == 1
+    assert plan["steps"][0]["agent"]["name"] == "analyst"
+    assert "catedralx_reasoning" in plan["steps"][0]["tools"]
