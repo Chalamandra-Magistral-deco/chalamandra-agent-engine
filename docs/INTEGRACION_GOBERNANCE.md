@@ -1,3 +1,9 @@
+> **Estado de implementación reconciliado — 2026-11-14.** El transporte y la validación de los contratos de gobernanza sí están implementados en Agents: `api/task_contracts.py` valida los tipos y límites estructurales; `api/worker_loop.py` transporta `dynamic_constraints` y `central_dimensions_bp` sin generarlos; el adaptador invoca CatedralX y conserva su resultado. Sigue pendiente que el sistema productor de producto/analytics genere y entregue dimensiones de gobernanza respaldadas por datos reales, así como una prueba E2E vigente con esas entradas. Por tanto, **integración de contrato implementada ≠ datos de gobernanza disponibles ≠ evaluación aceptada**.
+>
+> Este flujo (`catedralx_economic_evaluation`) es distinto de `catedralx_opportunity_evaluation`, que evalúa oportunidades de negocio mediante el CLI `BIN/catedral economic-opportunity`, y de `catedralx_economic_proposal_review`, reservado al ingreso autenticado desde CatedralX. No intercambiar sus payloads ni sus garantías.
+>
+> La evidencia de tareas indicada más abajo corresponde al snapshot histórico del 2026-10-29; no debe interpretarse como estado de producción actual.
+
 # Integración de Gobernanza
 
 Estado: contrato documentado; implementación pendiente de coordinación con producto.
