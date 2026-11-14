@@ -76,8 +76,10 @@ Ollama es el único adaptador verificado por la suite local actual. Para habilit
 - `CHALAMANDRA_SEARCH_TERMS_DIR`: raíz permitida para CSV de minería. La herramienta es de solo lectura y solo propone candidatos; no modifica campañas.
 - `AZURE_KEYVAULT_URI`: necesaria si se llama al helper de Key Vault directamente.
 - `CHALAMANDRA_API_HOST`, `CHALAMANDRA_API_PORT`: la API solo permite loopback; por defecto `127.0.0.1:8766`.
-- `CHALAMANDRA_API_TOKEN`: token bearer para los POST y para todas las rutas cuando se configura.
-- `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Para activar planificación/ejecución de tareas exige además un token.
+- Autenticación JWT HS256: todas las rutas salvo `GET /healthz` exigen `Authorization: Bearer <JWT>` con el `scope` de la operación. `CHALAMANDRA_JWT_SECRET` es el secreto general; `CHALAMANDRA_CATEDRALX_JWT_SECRET` es el secreto de la identidad `catedralx-service` y `CHALAMANDRA_MAGIS_JWT_SECRET` el de `magis-service`. La variable antigua `CHALAMANDRA_API_TOKEN` ya no se usa: ningún endpoint la lee.
+- `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Activa planificación/ejecución de tareas con llamadas a modelos.
+- `CHALAMANDRA_STATE_DIR`: raíz del estado compartido API↔worker (por defecto `~/.local/state/chalamandra`); TaskBus, candidatos, aceptaciones y distribuciones viven en `<raíz>/agents`.
+- `CHALAMANDRA_CANDIDATE_HMAC_KEY`: **obligatoria**. Debe contener exactamente 64 caracteres hexadecimales (32 bytes aleatorios) y tener el mismo valor en `config/.env` (API) y `config/worker.env` (worker). API y worker rechazan arrancar si falta o no es válida. Cada registro de candidato se autentica con HMAC-SHA256 sobre el registro completo; los registros sin digest, incluidos los históricos, se rechazan para aceptación y entrega. No reutilices secretos JWT ni la semilla Ed25519 del verificador. La rotación invalida los registros existentes: no la realices sin un procedimiento de migración y validación que preserve el ledger.
 - `CHALAMANDRA_MAGIS_JWT_SECRET`: secreto independiente para la identidad server-to-server `magis-service`; no reutilizar el JWT general ni el de CatedralX.
 - `CHALAMANDRA_MAGIS_EXECUTION_ENABLED`: gate exclusivo del producto MAGIS; permanece `false` por defecto y no habilita `/v1/plan` ni `/v1/tasks` generales. API y Worker deben recibir el mismo estado aprobado de este gate.
 
@@ -121,12 +123,19 @@ Ejemplo de comprobación autenticada sin invocar modelos (lee el token sin impri
 ```bash
 python - <<'PY'
 import json
+import time
+import jwt
 from dotenv import dotenv_values
 from urllib.request import Request, urlopen
 
-token = dotenv_values("config/.env").get("CHALAMANDRA_API_TOKEN")
-if not token:
-    raise SystemExit("Falta CHALAMANDRA_API_TOKEN en config/.env")
+secret = dotenv_values("config/.env").get("CHALAMANDRA_JWT_SECRET")
+if not secret:
+    raise SystemExit("Falta CHALAMANDRA_JWT_SECRET en config/.env")
+token = jwt.encode(
+    {"sub": "smoke-reader", "scope": "results:read", "exp": int(time.time()) + 300},
+    secret,
+    algorithm="HS256",
+)
 for path in ("/healthz", "/v1/inspect", "/v1/agents", "/v1/tools"):
     req = Request(
         "http://127.0.0.1:8766" + path,
@@ -147,7 +156,7 @@ systemctl --user enable --now chalamandra-agents-api.service
 systemctl --user status chalamandra-agents-api.service
 ```
 
-Los POST siempre requieren `Authorization: Bearer $CHALAMANDRA_API_TOKEN`. La API limita el tamaño del cuerpo a 64 KiB, no acepta campos extra en los contratos y no expone shell ni CORS. Sin token, el modo local solo ofrece GET de lectura. Las llamadas a modelos están desactivadas por defecto; el acceso remoto mediante HTTP directo está bloqueado. Para integrar otro sistema, usa un túnel privado autenticado o proxy TLS tras una revisión de permisos.
+Todas las rutas salvo `GET /healthz` requieren `Authorization: Bearer <JWT HS256>` con el `scope` de la operación. La API limita el tamaño del cuerpo a 64 KiB, no acepta campos extra en los contratos y no expone shell ni CORS. Sin JWT válido, el modo local solo ofrece `GET /healthz`. Las llamadas a modelos están desactivadas por defecto; el acceso remoto mediante HTTP directo está bloqueado. Para integrar otro sistema, usa un túnel privado autenticado o proxy TLS tras una revisión de permisos.
 
 ### Docker Compose portable
 

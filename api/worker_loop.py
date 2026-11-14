@@ -39,12 +39,16 @@ def _task_timeout_handler(signum, frame):
 def _catedral_repo() -> Path:
     """Resolve CatedralX from configuration or the canonical sibling checkout."""
     configured = os.getenv("CATEDRALX_PATH")
-    candidate = (
-        Path(configured).expanduser()
-        if configured
-        else Path(__file__).resolve().parents[2] / "CatedralX"
-    )
-    return candidate.resolve()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    parent = Path(__file__).resolve().parents[2]
+    # El checkout canónico es "CatedralX", pero en local puede existir como
+    # "catedralx" en minúscula; aceptar ambas grafías si contienen el CLI.
+    for name in ("CatedralX", "catedralx"):
+        candidate = parent / name
+        if (candidate / "BIN" / "catedral").is_file():
+            return candidate.resolve()
+    return (parent / "CatedralX").resolve()
 
 def _run_catedralx(payload: dict) -> dict:
     """Ejecuta CatedralX con datos observados y su procedencia original."""
@@ -160,7 +164,10 @@ def _run_catedralx(payload: dict) -> dict:
             env=env,
             capture_output=True,
             text=True,
-            timeout=60,
+            # 55 s: por debajo del SIGALRM del worker (60 s) para que el
+            # timeout del subproceso gane la carrera y se mapee a BLOCKED
+            # en lugar de propagar TaskTimeout.
+            timeout=55,
             check=False,
         )
         stdout = result.stdout.strip()
@@ -225,6 +232,14 @@ def _run_catedralx(payload: dict) -> dict:
                 "return_code": result.returncode,
             }
         return decision
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Igual que _run_catedralx_opportunity: un fallo de ejecución del
+        # subproceso (timeout, checkout inexistente) es BLOCKED, no una
+        # excepción que se propague fuera de process_task.
+        return {
+            "status": "BLOCKED",
+            "reason": f"catedralx_execution_error:{type(exc).__name__}",
+        }
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
@@ -573,7 +588,12 @@ def process_task(task: dict) -> dict:
 
     objective = task.get("objective", "")
     if isinstance(objective, str) and objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
-        payload.setdefault("trace_id", task.get("trace_id"))
+        # La traza de la tarea es la única identidad de correlación: si el
+        # payload declara otro trace_id, manda el de la tarea (la API ya
+        # rechaza el desajuste en el borde; esto cubre tareas encoladas por
+        # otras vías).
+        if task.get("trace_id") is not None:
+            payload["trace_id"] = task["trace_id"]
     evidence = []
     summary = "No ejecutado"
     status = "failed"
@@ -614,7 +634,9 @@ def process_task(task: dict) -> dict:
                 status = "blocked"
         elif objective.strip() == CATEDRALX_ECONOMIC_EVALUATION:
             engine_payload = dict(payload)
-            engine_payload.setdefault("trace_id", task.get("trace_id"))
+            # Ver comentario en la rama de oportunidad: manda la traza de la tarea.
+            if task.get("trace_id") is not None:
+                engine_payload["trace_id"] = task["trace_id"]
             result = _run_catedralx(engine_payload)
             if result.get("engine") == "CatedralX" and result.get("result_id"):
                 # Preservar el DecisionResult, incluso cuando el motor lo marque UNCERTAIN/REJECTED.
@@ -913,6 +935,8 @@ def main():
         raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe ser entero") from exc
     if not 1 <= process_count <= 16:
         raise ValueError("CHALAMANDRA_WORKER_PROCESSES debe estar entre 1 y 16")
+
+    candidate_store.require_integrity_key()
 
     if process_count == 1:
         stop_event = threading.Event()

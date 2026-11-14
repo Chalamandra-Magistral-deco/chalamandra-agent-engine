@@ -8,6 +8,11 @@ import pytest
 from api import candidate_store, task_bus, worker_loop
 
 
+def _without_digest(record):
+    """Stored records carry integrity fields; compare the candidate payload."""
+    return {k: v for k, v in record.items() if k not in {"record_digest", "record_digest_alg"}}
+
+
 def _complete_task(candidate: dict) -> str:
     task_id = task_bus.enqueue_task({"objective": "candidate publication recovery"})
     claim = task_bus.get_next_task()
@@ -72,7 +77,7 @@ def test_reconciliation_recovers_sqlite_commit_without_duplicate_jsonl():
         "conflicted": 0,
         "published": 1,
     }
-    assert candidate_store.get_candidate(candidate["candidate_id"]) == candidate
+    assert _without_digest(candidate_store.get_candidate(candidate["candidate_id"])) == candidate
 
     second = candidate_store.reconcile_pending_publications()
     assert second == {
@@ -187,7 +192,7 @@ def test_worker_reconciles_outbox_before_claiming_more_tasks(monkeypatch):
 
     worker_loop._run_worker_loop(stop_event=StopAfterOneIteration())
 
-    assert candidate_store.get_candidate(candidate["candidate_id"]) == candidate
+    assert _without_digest(candidate_store.get_candidate(candidate["candidate_id"])) == candidate
     assert task_bus.get_pending_candidate_publications() == []
 
 
@@ -209,8 +214,8 @@ def test_duplicate_candidate_id_conflict_is_quarantined_and_other_entries_contin
         "conflicted": 1,
         "published": 2,
     }
-    assert candidate_store.get_candidate("historical-duplicate") == first
-    assert candidate_store.get_candidate("independent-candidate") == independent
+    assert _without_digest(candidate_store.get_candidate("historical-duplicate")) == first
+    assert _without_digest(candidate_store.get_candidate("independent-candidate")) == independent
     assert task_bus.get_pending_candidate_publications() == []
     blocked = task_bus.get_blocked_candidate_publications()
     assert len(blocked) == 1

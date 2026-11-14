@@ -1,13 +1,66 @@
 """Append-only CandidateResult projection with an indexed JSONL ledger."""
 import hashlib
+import hmac
 import json
+import os
+import re
 from pathlib import Path
 
 from api.jsonl_index import JsonlIndex
+from api.state_dir import agents_state_dir
 
 
 def _state_dir() -> Path:
-    return Path.home() / ".local" / "state" / "chalamandra" / "agents"
+    return agents_state_dir()
+
+
+def _digest_key() -> bytes:
+    raw = os.getenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "").strip()
+    if len(raw) != 64 or not re.fullmatch(r"[0-9a-fA-F]{64}", raw):
+        raise RuntimeError(
+            "CHALAMANDRA_CANDIDATE_HMAC_KEY es obligatorio y debe contener "
+            "exactamente 64 caracteres hexadecimales (32 bytes)"
+        )
+    return bytes.fromhex(raw)
+
+
+def require_integrity_key() -> None:
+    """Fail startup when candidate-record integrity cannot be authenticated."""
+    _digest_key()
+
+
+def _record_digest_fields(record: dict) -> tuple[str, str]:
+    """Authenticate the complete candidate record with HMAC-SHA256."""
+    body = {
+        key: value
+        for key, value in record.items()
+        if key not in {"record_digest", "record_digest_alg"}
+    }
+    serialized = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    digest = hmac.new(
+        _digest_key(),
+        serialized.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return "hmac-sha256", digest
+
+
+def _verify_record_digest(record: dict) -> None:
+    digest = record.get("record_digest")
+    algorithm = record.get("record_digest_alg")
+    if not isinstance(digest, str) or not isinstance(algorithm, str):
+        raise ValueError("candidate record_digest missing or invalid")
+    if algorithm != "hmac-sha256":
+        raise ValueError("candidate record_digest algorithm is not trusted")
+    expected_algorithm, expected = _record_digest_fields(record)
+    if algorithm != expected_algorithm or not hmac.compare_digest(digest, expected):
+        raise ValueError("candidate record integrity check failed: record_digest mismatch")
 
 
 def _candidates_file() -> Path:
@@ -27,8 +80,12 @@ def _serialize_candidate(candidate: dict) -> str:
 
 
 def _save_candidate(candidate: dict) -> tuple[str, bool]:
-    serialized = _serialize_candidate(candidate)
-    candidate_id = candidate.get("candidate_id")
+    stored = dict(candidate)
+    alg, digest = _record_digest_fields(stored)
+    stored["record_digest"] = digest
+    stored["record_digest_alg"] = alg
+    serialized = _serialize_candidate(stored)
+    candidate_id = stored.get("candidate_id")
     if not isinstance(candidate_id, str) or not candidate_id.strip():
         raise ValueError("candidate_id requerido")
 
@@ -42,7 +99,7 @@ def _save_candidate(candidate: dict) -> tuple[str, bool]:
                     "candidate_id conflict: existing candidate has different content"
                 )
             return candidate_id, False
-        store.append(db, candidate)
+        store.append(db, stored)
     return candidate_id, True
 
 
@@ -109,7 +166,14 @@ def get_candidate(candidate_id: str) -> dict | None:
     store = JsonlIndex(_candidates_file(), ("candidate_id",))
     with store.locked() as db:
         matches = store.find(db, "candidate_id", candidate_id)
-        return matches[-1] if matches else None
+        if not matches:
+            return None
+        record = matches[-1]
+        # Fail-closed: a tampered record never reaches acceptance or delivery.
+        # record_acceptance() and get_acceptance() read through here, so the
+        # integrity check also covers the acceptance re-verification path.
+        _verify_record_digest(record)
+        return record
 
 
 def compute_evidence_digest(candidate: dict) -> str:

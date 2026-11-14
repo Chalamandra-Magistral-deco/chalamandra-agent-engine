@@ -16,7 +16,11 @@ from api import acceptance_store
 from api import subscription_store
 from api import webhook_dispatcher
 from api import task_bus
-from api.task_contracts import validate_task_contract
+from api.task_contracts import (
+    CATEDRALX_ECONOMIC_EVALUATION,
+    CATEDRALX_OPPORTUNITY_EVALUATION,
+    validate_task_contract,
+)
 from api import candidate_store
 from api import trace_store
 from api.trace_parser import parse_traceparent
@@ -84,13 +88,11 @@ class EngineHTTPServer(ThreadingHTTPServer):
         handler_class: type[BaseHTTPRequestHandler],
         *,
         master: Master | None = None,
-        api_token: str | None = None,
         model_calls_enabled: bool = False,
         magis_execution_enabled: bool = False,
     ) -> None:
         host = str(server_address[0])
         self.host_is_loopback = _is_loopback_host(host)
-        self.api_token = api_token.strip() if api_token and api_token.strip() else None
         self.model_calls_enabled = model_calls_enabled
         self.magis_execution_enabled = magis_execution_enabled
         self.master = master or Master()
@@ -873,6 +875,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "detail": contract_error,
                 })
                 return
+            # Una sola identidad de traza por solicitud: en las rutas de
+            # CatedralX el trace_id del payload debe coincidir con el de
+            # la cabecera traceparent. Si difieren, la correlación se
+            # partiría (trace_id de la tarea != catedralx_trace_id) sin
+            # ningún rechazo. Fail-closed en el borde de la API.
+            if objective.strip() in {CATEDRALX_ECONOMIC_EVALUATION, CATEDRALX_OPPORTUNITY_EVALUATION}:
+                payload_trace_id = payload.get("trace_id") if isinstance(payload, dict) else None
+                if payload_trace_id is not None and payload_trace_id != self.trace_id:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "trace_id_mismatch",
+                        "detail": "payload trace_id does not match traceparent trace_id",
+                    })
+                    return
             permissions = body.get("permissions", {})
             if not isinstance(permissions, dict):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "permissions_must_be_object"})
@@ -1078,6 +1093,19 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
 
+            # Una sola identidad de traza por solicitud (ver handler de
+            # /internal/v1/orchestration/runs y /v1/request): en las rutas
+            # de CatedralX el trace_id del payload debe coincidir con el
+            # de la cabecera traceparent.
+            if objective.strip() in {CATEDRALX_ECONOMIC_EVALUATION, CATEDRALX_OPPORTUNITY_EVALUATION}:
+                payload_trace_id = payload.get("trace_id") if isinstance(payload, dict) else None
+                if payload_trace_id is not None and payload_trace_id != self.trace_id:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {
+                        "error": "trace_id_mismatch",
+                        "detail": "payload trace_id does not match traceparent trace_id",
+                    })
+                    return
+
             # Encolar en el TaskBus unificado únicamente tras validar el tipo y payload.
             trace_id = self.trace_id
             try:
@@ -1187,7 +1215,6 @@ def create_server(
     if not 0 <= bind_port <= 65535:
         raise ValueError("CHALAMANDRA_API_PORT fuera de rango")
 
-    token = os.getenv("CHALAMANDRA_API_TOKEN", "").strip() or None
     model_calls_enabled = os.getenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -1201,20 +1228,22 @@ def create_server(
             "La API solo puede enlazarse a loopback; para acceso remoto usa un túnel "
             "autenticado o proxy TLS, no HTTP directo."
         )
-    if model_calls_enabled and token is None:
-        raise ValueError(
-            "CHALAMANDRA_API_TOKEN es obligatorio al habilitar llamadas a modelos"
-        )
     if magis_execution_enabled and len(magis_secret) < 32:
         raise ValueError(
             "CHALAMANDRA_MAGIS_JWT_SECRET de al menos 32 caracteres es obligatorio al habilitar MAGIS"
         )
 
+    try:
+        candidate_store.require_integrity_key()
+    except RuntimeError as exc:
+        raise ValueError(
+            "API no puede iniciar sin CHALAMANDRA_CANDIDATE_HMAC_KEY válida"
+        ) from exc
+
     return EngineHTTPServer(
         (bind_host, bind_port),
         EngineRequestHandler,
         master=master,
-        api_token=token,
         model_calls_enabled=model_calls_enabled,
         magis_execution_enabled=magis_execution_enabled,
     )

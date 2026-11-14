@@ -36,6 +36,11 @@ def test_task_queue_queries_use_partial_indexes(tmp_path, monkeypatch):
     assert "idx_tasks_run_created" in " ".join(str(row) for row in by_run)
 
 
+def _without_digest(record):
+    """Stored records carry integrity fields; compare the candidate payload."""
+    return {k: v for k, v in record.items() if k not in {"record_digest", "record_digest_alg"}}
+
+
 def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch):
     monkeypatch.setattr(candidate_store, "_state_dir", lambda: tmp_path)
     candidate = {"candidate_id": "candidate-1", "status": "candidate", "revision": 1}
@@ -43,7 +48,7 @@ def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch)
     candidate_store.save_candidate(candidate)
 
     found = candidate_store.get_candidate("candidate-1")
-    assert found == candidate
+    assert _without_digest(found) == candidate
     path = candidate_store._candidates_file()
     assert len(path.read_text(encoding="utf-8").splitlines()) == 1
 
@@ -57,8 +62,8 @@ def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch)
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"candidate_id": "candidate-legacy", "status": "blocked"}) + "\n")
 
-    rebuilt = candidate_store.get_candidate("candidate-legacy")
-    assert rebuilt == {"candidate_id": "candidate-legacy", "status": "blocked"}
+    with pytest.raises(ValueError, match="record_digest"):
+        candidate_store.get_candidate("candidate-legacy")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
@@ -67,8 +72,10 @@ def test_trace_fsync_is_batched_per_interval(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(trace_store, "_trace_file", lambda: target)
     monkeypatch.setattr(trace_store.os, "fsync", lambda fd: calls.append(fd))
-    monkeypatch.setattr(trace_store, "_LAST_SYNC", 0.0)
+    # The monotonic clock may start below 60 seconds in a fresh CI container.
+    monkeypatch.setattr(trace_store, "_LAST_SYNC", -61.0)
     monkeypatch.setattr(trace_store, "_SYNC_INTERVAL_SECONDS", 60.0)
+    monkeypatch.setattr(trace_store, "_TRACE_TARGET_READY", None)
 
     for number in range(5):
         trace_store.record_request(

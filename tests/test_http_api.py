@@ -301,7 +301,7 @@ def test_payload_size_and_content_type_are_limited(local_api):
     assert result["error"] == "content_type_must_be_json"
 
 
-def test_token_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
+def test_jwt_protects_loopback_server(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", TEST_JWT_SECRET)
     monkeypatch.delenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", raising=False)
     server = create_server("127.0.0.1", 0, master=Master())
@@ -338,12 +338,24 @@ def test_non_loopback_requires_token(monkeypatch: pytest.MonkeyPatch):
         create_server("0.0.0.0", 0)
 
 
-def test_model_calls_require_token_even_on_loopback(monkeypatch: pytest.MonkeyPatch):
+def test_api_startup_requires_candidate_hmac_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", raising=False)
+    with pytest.raises(ValueError, match="CHALAMANDRA_CANDIDATE_HMAC_KEY"):
+        create_server("127.0.0.1", 0)
+
+
+def test_model_calls_start_without_api_token(monkeypatch: pytest.MonkeyPatch):
+    # CHALAMANDRA_API_TOKEN era una credencial muerta: create_server lo exigía
+    # para habilitar llamadas a modelos, pero ningún endpoint lo leía (la
+    # autenticación real es JWT con scopes). El arranque ya no lo exige.
     monkeypatch.delenv("CHALAMANDRA_API_TOKEN", raising=False)
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "true")
 
-    with pytest.raises(ValueError, match="CHALAMANDRA_API_TOKEN"):
-        create_server("127.0.0.1", 0)
+    server = create_server("127.0.0.1", 0)
+    try:
+        assert server.model_calls_enabled is True
+    finally:
+        server.server_close()
 
 
 def test_internal_run_status_requires_orchestration_read_scope(local_api, monkeypatch):
@@ -1176,3 +1188,74 @@ def test_create_subscription_rejects_blocked_event_type(local_api):
     assert body["error"] == "invalid_subscription"
     assert body["allowed_event_types"] == ["result.accepted"]
 
+
+
+def _opportunity_request_body(trace_id: str) -> dict:
+    import hashlib
+    from datetime import datetime, timezone
+
+    return {
+        "objective": "catedralx_opportunity_evaluation",
+        "payload": {
+            "opportunity_id": "opp-trace-test",
+            "name": "Servicio digital de prueba",
+            "category": "digital_service",
+            "income_model": "hybrid",
+            "currency": "MXN",
+            "horizon_months": 12,
+            "capital_required": 5000,
+            "available_capital": 3000,
+            "revenue": [{"amount": 2000, "frequency": "monthly", "evidence_id": "ev-1"}],
+            "costs": [{"amount": 500, "frequency": "monthly", "evidence_id": "ev-1"}],
+            "evidence": [{
+                "evidence_id": "ev-1",
+                "source": "synthetic_test_fixture",
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "digest": hashlib.sha256(b"synthetic-test-evidence").hexdigest(),
+            }],
+            "assumptions": ["La demanda mensual permanece estable durante el horizonte."],
+            "scenarios": [
+                {"name": "conservative", "revenue_multiplier": 0.7, "cost_multiplier": 1.2},
+                {"name": "base", "revenue_multiplier": 1.0, "cost_multiplier": 1.0},
+                {"name": "optimistic", "revenue_multiplier": 1.2, "cost_multiplier": 0.9},
+            ],
+            "trace_id": trace_id,
+        },
+        "permissions": {"allowed_tools": [], "side_effects": "none"},
+        "success_criteria": ["Return reproducible economic scenarios."],
+    }
+
+
+def test_opportunity_rejects_payload_trace_id_mismatch(local_api):
+    # H-01: el trace_id del payload debe coincidir con el de traceparent;
+    # si difieren, la correlación se partiría sin rechazo.
+    port, _ = local_api
+    header_trace_id = "1234567890abcdef1234567890abcdef"
+    payload_trace_id = "fedcfedcfedcfedcfedcfedcfedcfedc"
+    headers = {
+        "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+        "Idempotency-Key": "trace-mismatch-test-001",
+        "traceparent": f"00-{header_trace_id}-1234567890abcdef-01",
+    }
+    status, result = request(
+        port, "/v1/request", method="POST",
+        payload=_opportunity_request_body(payload_trace_id), headers=headers,
+    )
+    assert status == 400
+    assert result["error"] == "trace_id_mismatch"
+
+
+def test_opportunity_accepts_matching_payload_trace_id(local_api):
+    port, _ = local_api
+    trace_id = "1234567890abcdef1234567890abcdef"
+    headers = {
+        "Authorization": f"Bearer {make_jwt(scopes='jobs:write')}",
+        "Idempotency-Key": "trace-match-test-001",
+        "traceparent": f"00-{trace_id}-1234567890abcdef-01",
+    }
+    status, result = request(
+        port, "/v1/request", method="POST",
+        payload=_opportunity_request_body(trace_id), headers=headers,
+    )
+    assert status == 202
+    assert result["trace_id"] == trace_id

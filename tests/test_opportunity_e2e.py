@@ -23,9 +23,14 @@ import jwt
 import pytest
 from nacl.signing import SigningKey
 
-from api import acceptance_store, candidate_store, task_bus, webhook_dispatcher
+from api import (
+    acceptance_store,
+    candidate_store,
+    distribution_store,
+    task_bus,
+    webhook_dispatcher,
+)
 from api.server import create_server
-from api.worker_loop import process_task
 
 
 TEST_VERIFIER_SEED_HEX = "44" * 32
@@ -130,13 +135,32 @@ def _signed_decision(candidate: dict, outcome: str) -> dict:
     return decision
 
 
-def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatch):
+def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatch, tmp_path):
     catedralx_path = os.getenv("CATEDRALX_PATH")
     if not catedralx_path or not (Path(catedralx_path) / "BIN/catedral").is_file():
         pytest.skip("Canonical CatedralX checkout is supplied by the integration CI job.")
 
     monkeypatch.setenv("CATEDRALX_PATH", catedralx_path)
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
+    state_root = tmp_path / "state"
+    agents_state = state_root / "agents"
+    for store in (
+        acceptance_store,
+        candidate_store,
+        distribution_store,
+        task_bus,
+        webhook_dispatcher,
+    ):
+        monkeypatch.setattr(store, "_state_dir", lambda: agents_state)
+    monkeypatch.setenv("CHALAMANDRA_STATE_DIR", str(state_root))
+    monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "ab" * 32)
+    monkeypatch.setenv("CHALAMANDRA_TRACE_LOG_PATH", str(agents_state / "traces.jsonl"))
+    monkeypatch.setenv(
+        "CHALAMANDRA_WORKER_HEARTBEAT_PATH",
+        str(agents_state / "worker_heartbeat.json"),
+    )
+    monkeypatch.setenv("CHALAMANDRA_WORKER_PROCESSES", "1")
+    monkeypatch.setenv("CHALAMANDRA_WORKER_POLL_INTERVAL", "0.05")
     monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", "isolated-opportunity-e2e-verifier")
     monkeypatch.setenv(
         "CHALAMANDRA_VERIFIER_PUBLIC_KEY",
@@ -187,6 +211,43 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
     thread.start()
     port = server.server_address[1]
 
+    repository_root = Path(__file__).resolve().parents[1]
+    worker_env = os.environ.copy()
+    worker_env["PYTHONPATH"] = str(repository_root)
+    worker = subprocess.Popen(
+        [sys.executable, "-m", "api.worker_loop"],
+        cwd=repository_root,
+        env=worker_env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    def wait_for_candidate(task_id: str) -> dict:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            task_record = task_bus.get_task_status(task_id)
+            if task_record is not None:
+                task_status = task_record.get("status")
+                if task_status in {"blocked", "failed"}:
+                    detail = task_record.get("candidate_result")
+                    raise AssertionError(
+                        f"worker completed task as {task_status}: {detail}"
+                    )
+                raw_candidate = task_record.get("candidate_result")
+                if isinstance(raw_candidate, str) and raw_candidate:
+                    result = json.loads(raw_candidate)
+                    candidate_id = result.get("candidate_id")
+                    if isinstance(candidate_id, str) and candidate_id:
+                        persisted = candidate_store.get_candidate(candidate_id)
+                        if persisted is not None:
+                            return persisted
+            if worker.poll() is not None:
+                stderr = worker.stderr.read() if worker.stderr else ""
+                raise AssertionError(f"worker process exited: {stderr}")
+            time.sleep(0.1)
+        raise AssertionError(f"worker did not publish candidate for task {task_id}")
+
     try:
         status, queued = _http_json(
             port,
@@ -212,11 +273,9 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
         assert queued["status"] == "queued"
         assert queued["trace_id"] == TRACE_ID
 
-        # Exercise the same persisted queue and worker path used by the service.
-        task = task_bus.get_next_task()
-        assert task is not None
-        assert task["task_id"] == queued["task_id"]
-        candidate = process_task(task)
+        # The API enqueues work; an independent worker process claims the lease,
+        # invokes the real CatedralX CLI, and publishes the durable candidate.
+        candidate = wait_for_candidate(queued["task_id"])
 
         assert candidate["status"] == "candidate"
         assert candidate["engine"] == "CatedralX"
@@ -301,10 +360,7 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
             },
         )
         assert status == 202, accepted_queued
-        accepted_task = task_bus.get_next_task()
-        assert accepted_task is not None
-        assert accepted_task["task_id"] == accepted_queued["task_id"]
-        accepted_candidate = process_task(accepted_task)
+        accepted_candidate = wait_for_candidate(accepted_queued["task_id"])
         assert accepted_candidate["status"] == "candidate"
         assert accepted_candidate["analysis_only"] is True
         assert accepted_candidate["orders_created"] is False
@@ -350,6 +406,13 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
         assert delivered["orders_executed"] is False
         assert task_bus.get_task_status(accepted_queued["task_id"])["status"] == "accepted"
     finally:
+        if worker.poll() is None:
+            worker.terminate()
+            try:
+                worker.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait(timeout=5)
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
