@@ -150,9 +150,46 @@ class Master:
             "models": self.orchestrator.available_models(),
             "tools": self.tools.available(),
             "agents": self.agent_registry.available(self.tools.available()),
+            "coordination": self.coordination_contract(),
             "capabilities": self.orchestrator.capabilities(),
             # Only source/status metadata is exposed, never credential values.
             "credential_status": dict(getattr(self.orchestrator, "credential_status", {})),
+        }
+
+    @staticmethod
+    def coordination_contract() -> dict[str, Any]:
+        """
+        Declara el contrato de coordinación central de Agents sin ejecutar tareas.
+
+        Agents coordina el trabajo y las dependencias; CatedralX conserva el
+        razonamiento predictivo estratégico; Membrana agrupa controles distribuidos.
+        La autorización crítica pertenece al operador y la aceptación a un verificador
+        independiente.
+
+        Returns:
+            dict: Roles, interfaces y límites de autoridad del sistema.
+        """
+        return {
+            "coordinator": "Agents",
+            "role": "central_orchestration",
+            "responsibilities": [
+                "receive_objectives_and_authorized_mandates",
+                "decompose_and_prioritize_work",
+                "assign_specialized_agents_and_tools",
+                "manage_dependencies_and_task_lifecycle",
+                "consolidate_evidence_and_report_blockers",
+            ],
+            "strategic_engine": "CatedralX",
+            "strategic_engine_role": "predictive_analysis_and_decision_proposals",
+            "strategic_dispatch": "explicit_catedralx_economic_evaluation_contract",
+            "governance_boundary": "Membrana",
+            "human_authorization_required": True,
+            "independent_acceptance_required": True,
+            "prohibitions": [
+                "agents_must_not_replace_catedralx_reasoning",
+                "agents_must_not_self_authorize_external_effects",
+                "workers_must_not_self_accept_candidates",
+            ],
         }
 
     def route_skill(self, skill: str | Skill) -> dict[str, list[str]]:
@@ -315,6 +352,8 @@ class Master:
 
         return {
             "task": task,
+            "coordinator": "Agents",
+            "coordination": self.coordination_contract(),
             "subtask_count": len(subtasks),
             "steps": steps,
         }
