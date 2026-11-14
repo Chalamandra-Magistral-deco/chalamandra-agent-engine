@@ -1,6 +1,6 @@
 # Chalamandra Agent Engine
 
-Motor Python de agentes y herramientas de Chalamandra Magistral. Es una biblioteca de ejecución —no un servicio persistente— cuyo punto de entrada es `core.master.Master`.
+Motor coordinador Python de Chalamandra Magistral, compuesto por el núcleo `core.master.Master`, una API HTTP local (`api.server`) y un worker persistente (`api.worker_loop`). La biblioteca puede usarse directamente desde Python; la API y el worker son procesos independientes que comparten los contratos y el TaskBus.
 
 ## Arquitectura
 
