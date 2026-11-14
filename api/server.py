@@ -37,10 +37,9 @@ MAX_TASK_CHARS = 8_000
 
 
 def _is_loopback_host(host: str) -> bool:
-    # Permite 0.0.0.0 en contenedor si se pide explícitamente
-    if host == "0.0.0.0" and os.getenv("ALLOW_CONTAINER_BIND") == "true":
+    """Allow loopback, plus explicit wildcard binding inside a controlled container."""
+    if host == "0.0.0.0" and os.getenv("ALLOW_CONTAINER_BIND", "").strip().lower() == "true":
         return True
-    """Only treat explicit loopback addresses/names as safe for no-token mode."""
     if host.casefold() == "localhost":
         return True
     try:
