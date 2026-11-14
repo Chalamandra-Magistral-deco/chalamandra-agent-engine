@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -254,7 +255,6 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
         task_bus,
         webhook_dispatcher,
     )
-    from api.server import create_server
 
     jwt_secret = "integration-test-jwt-secret-32-bytes-minimum"
     monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", jwt_secret)
@@ -319,15 +319,51 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
     )
     assert subscription["status"] == "enabled"
 
-    api = create_server("127.0.0.1", 0)
-    api_thread = threading.Thread(target=api.serve_forever, daemon=True)
-    api_thread.start()
-    base_url = f"http://127.0.0.1:{api.server_address[1]}"
+    repo_root = Path(__file__).resolve().parents[1]
+    api_env = os.environ.copy()
+    api_env["PYTHONPATH"] = str(repo_root) + os.pathsep + api_env.get("PYTHONPATH", "")
+    api_env["CHALAMANDRA_API_HOST"] = "127.0.0.1"
 
+    api_process = None
     worker_process = None
     trace_id = "1234567890abcdef1234567890abcdef"
     traceparent = f"00-{trace_id}-1234567890abcdef-01"
     try:
+        # Start the real API entrypoint in its own process. The worker below
+        # uses the same HOME-backed state volume, matching the Compose services.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            api_port = listener.getsockname()[1]
+        api_env["CHALAMANDRA_API_PORT"] = str(api_port)
+        api_process = subprocess.Popen(
+            [sys.executable, "-m", "api.server"],
+            cwd=repo_root,
+            env=api_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        base_url = f"http://127.0.0.1:{api_port}"
+        api_deadline = time.monotonic() + 30
+        while time.monotonic() < api_deadline:
+            if api_process.poll() is not None:
+                output, _ = api_process.communicate(timeout=2)
+                raise AssertionError(
+                    "API process exited before becoming healthy: " + output[-4000:]
+                )
+            try:
+                health_status, _ = _http_json(
+                    f"{base_url}/healthz",
+                    token=_make_jwt(jwt_secret, "jobs:read"),
+                )
+                if health_status == 200:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.1)
+        else:
+            raise AssertionError("API process did not become healthy within 30 seconds")
+
         observed_at = datetime.now(timezone.utc).isoformat()
         prices = [100.0 + index * 0.01 for index in range(59)]
         from conftest import sign_market_payload
@@ -380,9 +416,7 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
 
         # Run the production worker entrypoint as a separate process. It
         # must claim the API's SQLite task through the shared state directory.
-        repo_root = Path(__file__).resolve().parents[1]
-        worker_env = os.environ.copy()
-        worker_env["PYTHONPATH"] = str(repo_root) + os.pathsep + worker_env.get("PYTHONPATH", "")
+        worker_env = api_env.copy()
         worker_process = subprocess.Popen(
             [sys.executable, "-m", "api.worker_loop"],
             cwd=repo_root,
@@ -521,9 +555,13 @@ def test_catedralx_agents_verification_and_distribution_full_lifecycle(
             except subprocess.TimeoutExpired:
                 worker_process.kill()
                 worker_process.communicate(timeout=5)
-        api.shutdown()
-        api.server_close()
-        api_thread.join(timeout=2)
+        if api_process is not None and api_process.poll() is None:
+            api_process.terminate()
+            try:
+                api_process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                api_process.kill()
+                api_process.communicate(timeout=5)
         receiver.shutdown()
         receiver.server_close()
         receiver_thread.join(timeout=2)
