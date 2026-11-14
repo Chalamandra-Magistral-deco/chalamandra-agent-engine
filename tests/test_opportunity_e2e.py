@@ -23,7 +23,7 @@ import jwt
 import pytest
 from nacl.signing import SigningKey
 
-from api import acceptance_store, candidate_store, task_bus
+from api import acceptance_store, candidate_store, task_bus, webhook_dispatcher
 from api.server import create_server
 from api.worker_loop import process_task
 
@@ -81,17 +81,22 @@ def _http_json(port: int, method: str, path: str, token: str, payload=None, head
     return status, json.loads(raw) if raw else {}
 
 
-def _signed_rejection(candidate: dict) -> dict:
+def _signed_decision(candidate: dict, outcome: str) -> dict:
+    if outcome not in {"accepted", "rejected"}:
+        raise ValueError("unsupported test decision outcome")
     decision = {
         "decision_id": str(uuid.uuid4()),
         "candidate_id": candidate["candidate_id"],
-        "outcome": "rejected",
+        "outcome": outcome,
         "criteria_checked": [
             "synthetic end-to-end trace continuity",
             "evidence digest integrity",
             "analysis-only execution boundary",
         ],
-        "reasons": ["Synthetic test verifies the independent rejection gate."],
+        "reasons": (
+            ["Synthetic test verifies the independent rejection gate."]
+            if outcome == "rejected" else []
+        ),
         "missing_evidence": [],
         "verifier_id": "isolated-opportunity-e2e-verifier",
         "evidence_digest": candidate_store.compute_evidence_digest(candidate),
@@ -109,7 +114,7 @@ def _signed_rejection(candidate: dict) -> dict:
         "CHALAMANDRA_ED25519_SEED": TEST_VERIFIER_SEED_HEX,
         "CHALAMANDRA_VERIFIER_ID": decision["verifier_id"],
     }
-    confirmation = f"REJECT:{decision['candidate_id']}"
+    confirmation = f"{outcome.upper()}:{decision['candidate_id']}"
     signed = subprocess.run(
         [sys.executable, str(verifier_cli), "--confirm", confirmation],
         input=json.dumps(decision),
@@ -244,7 +249,7 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
         assert status == 202
         assert pending["status"] == "pending_verification"
 
-        decision = _signed_rejection(candidate_store.get_candidate(candidate["candidate_id"]))
+        decision = _signed_decision(candidate_store.get_candidate(candidate["candidate_id"]), "rejected")
         status, rejected = _http_json(
             port, "POST", "/v1/acceptance", acceptance_jwt, decision
         )
@@ -262,7 +267,87 @@ def test_opportunity_http_worker_catedralx_and_independent_acceptance(monkeypatc
         assert persisted["trace_id"] == TRACE_ID
         assert task_bus.get_task_status(queued["task_id"])["status"] == "rejected"
         assert candidate_store.get_candidate(candidate["candidate_id"])["orders_created"] is False
+
         assert candidate_store.get_candidate(candidate["candidate_id"])["orders_executed"] is False
+
+        # A second isolated run proves the positive path: valid independent
+        # acceptance transitions the task and permits result delivery. The
+        # outbound webhook is stubbed; this test performs no network dispatch.
+        dispatched = []
+        monkeypatch.setattr(
+            webhook_dispatcher,
+            "dispatch_event",
+            lambda **kwargs: dispatched.append(kwargs) or 1,
+        )
+        status, accepted_queued = _http_json(
+            port,
+            "POST",
+            "/internal/v1/orchestration/runs",
+            service_jwt,
+            {
+                "objective": "catedralx_opportunity_evaluation",
+                "payload": _opportunity_payload(),
+                "permissions": {"allowed_tools": [], "side_effects": "none"},
+                "success_criteria": [
+                    "Return reproducible economic scenarios.",
+                    "Preserve evidence and trace identity.",
+                    "Produce an analysis-only candidate requiring independent acceptance.",
+                ],
+            },
+            headers={
+                "Idempotency-Key": "synthetic-opportunity-e2e-accepted-002",
+                "traceparent": f"00-{TRACE_ID}-fedcba9876543210-01",
+            },
+        )
+        assert status == 202, accepted_queued
+        accepted_task = task_bus.get_next_task()
+        assert accepted_task is not None
+        assert accepted_task["task_id"] == accepted_queued["task_id"]
+        accepted_candidate = process_task(accepted_task)
+        assert accepted_candidate["status"] == "candidate"
+        assert accepted_candidate["analysis_only"] is True
+        assert accepted_candidate["orders_created"] is False
+        assert accepted_candidate["orders_executed"] is False
+        assert accepted_candidate["economic_assessment"]["authorization"] == "NOT_GRANTED"
+
+        status, accepted_pending = _http_json(
+            port,
+            "GET",
+            f"/v1/results/{accepted_candidate['candidate_id']}",
+            read_jwt,
+        )
+        assert status == 202
+        assert accepted_pending["status"] == "pending_verification"
+
+        accepted_decision = _signed_decision(
+            candidate_store.get_candidate(accepted_candidate["candidate_id"]),
+            "accepted",
+        )
+        status, accepted_response = _http_json(
+            port, "POST", "/v1/acceptance", acceptance_jwt, accepted_decision
+        )
+        assert status == 201, accepted_response
+        assert accepted_response["outcome"] == "accepted"
+        assert dispatched == [{
+            "event_type": "result.accepted",
+            "result_id": accepted_candidate["candidate_id"],
+            "trace_id": TRACE_ID,
+            "event_id": f"acceptance:{accepted_decision['decision_id']}",
+        }]
+
+        status, delivered = _http_json(
+            port,
+            "GET",
+            f"/v1/results/{accepted_candidate['candidate_id']}",
+            read_jwt,
+        )
+        assert status == 200, delivered
+        assert delivered["delivery_status"] == "accepted"
+        assert delivered["acceptance"]["outcome"] == "accepted"
+        assert delivered["acceptance"]["trace_id"] == TRACE_ID
+        assert delivered["orders_created"] is False
+        assert delivered["orders_executed"] is False
+        assert task_bus.get_task_status(accepted_queued["task_id"])["status"] == "accepted"
     finally:
         server.shutdown()
         server.server_close()
