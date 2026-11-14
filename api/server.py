@@ -184,7 +184,16 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return True
         import jwt
         auth = self.headers.get("Authorization", "")
-        token = auth.replace("Bearer ", "").strip()
+        scheme, separator, credentials = auth.partition(" ")
+        if (
+            not separator
+            or scheme.casefold() != "bearer"
+            or not credentials
+            or credentials != credentials.strip()
+            or any(character.isspace() for character in credentials)
+        ):
+            return False
+        token = credentials
         secret_env = {
             "catedralx-service": "CHALAMANDRA_CATEDRALX_JWT_SECRET",
             "magis-service": "CHALAMANDRA_MAGIS_JWT_SECRET",
