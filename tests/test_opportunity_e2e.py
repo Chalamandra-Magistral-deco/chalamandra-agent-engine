@@ -18,8 +18,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 import jwt
 import pytest
