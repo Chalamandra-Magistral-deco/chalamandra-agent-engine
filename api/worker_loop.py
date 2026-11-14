@@ -574,6 +574,7 @@ def process_task(task: dict) -> dict:
     catedral_result_id: str | None = None
     catedralx_trace_id: str = ""
     canonical_decision_result: dict | None = None
+    economic_assessment: dict | None = None
     business_proposal_context: dict | None = None
 
     try:
@@ -584,7 +585,7 @@ def process_task(task: dict) -> dict:
         elif objective.strip() == CATEDRALX_OPPORTUNITY_EVALUATION:
             result = _run_catedralx_opportunity(payload)
             if result.get("evaluation_domain") == "business_opportunity" and result.get("result_id"):
-                canonical_decision_result = result
+                economic_assessment = result
                 catedral_result_id = str(result["result_id"])
                 catedralx_trace_id = str(result.get("trace_id") or "")
                 evidence.append({
@@ -798,13 +799,14 @@ def process_task(task: dict) -> dict:
             or None
         ),
         "decision_result": canonical_decision_result,
+        "economic_assessment": economic_assessment,
         "business_cycle_id": (
             business_proposal_context.get("cycle_id")
             if business_proposal_context else None
         ),
         "opportunity_id": (
-            canonical_decision_result.get("opportunity_id")
-            if canonical_decision_result and canonical_decision_result.get("evaluation_domain") == "business_opportunity"
+            economic_assessment.get("opportunity_id")
+            if economic_assessment and economic_assessment.get("evaluation_domain") == "business_opportunity"
             else None
         ),
         "business_proposal": business_proposal_context,
@@ -819,7 +821,7 @@ def process_task(task: dict) -> dict:
                 "independent_acceptance_required": True,
             }
         ),
-        "engine": "CatedralX" if canonical_decision_result else "ChalamandraAgentEngine",
+        "engine": "CatedralX" if canonical_decision_result or economic_assessment else "ChalamandraAgentEngine",
         "analysis_only": True,
         "orders_created": False,
         "orders_executed": False,

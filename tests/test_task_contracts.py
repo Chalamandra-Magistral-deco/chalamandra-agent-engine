@@ -348,7 +348,8 @@ def test_opportunity_evaluation_routes_to_catedralx_and_publishes_only_candidate
         "trace_id": trace_id,
     })
     assert result["status"] == "candidate"
-    assert result["decision_result"] == result_from_engine
+    assert result["decision_result"] is None
+    assert result["economic_assessment"] == result_from_engine
     assert result["engine"] == "CatedralX"
     assert result["opportunity_id"] == "opp-test-01"
     assert result["catedralx_trace_id"] == trace_id
