@@ -62,8 +62,8 @@ def test_candidate_store_index_is_idempotent_and_rebuilds(tmp_path, monkeypatch)
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({"candidate_id": "candidate-legacy", "status": "blocked"}) + "\n")
 
-    rebuilt = candidate_store.get_candidate("candidate-legacy")
-    assert rebuilt == {"candidate_id": "candidate-legacy", "status": "blocked"}
+    with pytest.raises(ValueError, match="record_digest"):
+        candidate_store.get_candidate("candidate-legacy")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
