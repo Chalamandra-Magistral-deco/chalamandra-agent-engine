@@ -108,7 +108,7 @@ python -m api.server
 ```
 
 Rutas disponibles:
-- `GET /healthz`: estado básico del servidor y política de ejecución.
+- `GET /healthz`: estado básico del servidor (sin autenticación y sin exponer la política de ejecución).
 - `GET /v1/inspect`: modelos, herramientas, perfiles y capacidades registradas; nunca devuelve valores secretos.
 - `GET /v1/agents`, `GET /v1/tools`: descubrimiento de perfiles/herramientas.
 - `POST /v1/tool-calls`: invoca una herramienta estructurada y valida el perfil autorizado mediante `Master.execute_agent_tool_call`.

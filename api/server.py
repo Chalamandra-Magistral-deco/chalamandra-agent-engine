@@ -153,6 +153,10 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 path=safe_path,
                 status=status,
                 client_ip=client,
+                # C-6: el handler fija estos atributos cuando la petición
+                # sirvió a un candidato o decisión concretos.
+                candidate_id=getattr(self, "trace_candidate_id", None),
+                decision_id=getattr(self, "trace_decision_id", None),
             )
         except OSError as exc:
             # Trace storage failure is observable; never print request bodies or secrets.
@@ -175,19 +179,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _authorized(
+    def _bearer_payload(
         self,
         *,
-        require_token: bool = True,
         required_scope: str | None = None,
         required_subject: str | None = None,
-    ) -> bool:
-        if not require_token:
-            return True
+    ) -> dict | None:
+        """Decode and validate the Bearer JWT; return its payload or None."""
         import jwt
         authorization_values = self.headers.get_all("Authorization", [])
         if len(authorization_values) != 1:
-            return False
+            return None
         auth = authorization_values[0]
         scheme, separator, credentials = auth.partition(" ")
         if (
@@ -197,7 +199,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             or credentials != credentials.strip()
             or any(character.isspace() for character in credentials)
         ):
-            return False
+            return None
         token = credentials
         secret_env = {
             "catedralx-service": "CHALAMANDRA_CATEDRALX_JWT_SECRET",
@@ -205,21 +207,47 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
         }.get(required_subject or "", "CHALAMANDRA_JWT_SECRET")
         secret = os.environ.get(secret_env, "")
         if not secret or not token:
-            return False
+            return None
         try:
             payload = jwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
             if required_scope:
                 scopes = payload.get("scope", "").split()
                 if required_scope not in scopes:
-                    return False
+                    return None
             if required_subject and payload.get("sub") != required_subject:
-                return False
-            return True
+                return None
+            return payload
         except jwt.PyJWTError:
-            return False
+            return None
+
+    def _authorized(
+        self,
+        *,
+        require_token: bool = True,
+        required_scope: str | None = None,
+        required_subject: str | None = None,
+    ) -> bool:
+        if not require_token:
+            return True
+        return (
+            self._bearer_payload(
+                required_scope=required_scope, required_subject=required_subject
+            )
+            is not None
+        )
 
     def _get_trace_id(self) -> str:
-        """Return the incoming W3C trace ID or generate a new local trace ID."""
+        """Return the incoming W3C trace ID or generate a new local trace ID.
+
+        C-6 (decisión): NO se impone unicidad estricta del trace_id. Un
+        trace_id W3C correlaciona una traza distribuida y reaparece de
+        forma legítima en reintentos y replays idempotentes (la aceptación
+        rejugada y los reintentos de distribución comparten la identidad
+        de traza por diseño); rechazar un trace_id reutilizado rompería
+        esos caminos y duplicaría la comprobación que ya hace el 400
+        trace_id_mismatch en el borde. La reconstrucción se apoya ahora
+        en candidate_id/decision_id en traces.jsonl (ver record_request).
+        """
         parsed = parse_traceparent(self.headers.get("traceparent", ""))
         return parsed["trace_id"] if parsed else uuid.uuid4().hex
 
@@ -289,6 +317,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             result_id = path.rsplit("/", 1)[-1]
+            self.trace_candidate_id = result_id  # C-6
             if not task_bus.is_magis_result(result_id):
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "magis_result_not_found"})
                 return
@@ -301,6 +330,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "acceptance_store_unavailable"})
                 return
+            if acceptance:
+                self.trace_decision_id = acceptance.get("decision_id")  # C-6
             if not acceptance:
                 self._send_json(HTTPStatus.ACCEPTED, {
                     "status": "pending_verification",
@@ -330,6 +361,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             result_id = path.split("/")[-1]
+            self.trace_candidate_id = result_id  # C-6
             # P0-5 / P1-6: Buscar en el candidate_store unificado
             result = candidate_store.get_candidate(result_id)
             if not result:
@@ -342,6 +374,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "acceptance_store_unavailable"})
                 return
+            if acceptance:
+                self.trace_decision_id = acceptance.get("decision_id")  # C-6
             if not acceptance:
                 self._send_json(HTTPStatus.ACCEPTED, {
                     "status": "pending_verification",
@@ -405,10 +439,12 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "run_not_found"})
                 return
             task_statuses = [t.get("status", "queued") for t in run_tasks]
-            terminal = {"candidate", "blocked", "failed", "completed", "accepted", "rejected"}
+            # F-2: 'dead_letter' es terminal; un run con tareas en cuarentena
+            # no queda en "executing" para siempre y se reporta con errores.
+            terminal = {"candidate", "blocked", "failed", "completed", "accepted", "rejected", "dead_letter"}
             if not all(status_value in terminal for status_value in task_statuses):
                 status = "executing"
-            elif any(status_value in {"blocked", "failed", "rejected"} for status_value in task_statuses):
+            elif any(status_value in {"blocked", "failed", "rejected", "dead_letter"} for status_value in task_statuses):
                 status = "completed_with_errors"
             elif any(status_value == "candidate" for status_value in task_statuses):
                 status = "awaiting_acceptance"
@@ -427,13 +463,17 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/healthz":
+            # F-8: health mínimo sin autenticación. Antes exponía
+            # execution_enabled/magis_execution_enabled a cualquiera que
+            # pudiera alcanzar el puerto (con ALLOW_CONTAINER_BIND=true,
+            # toda la red del contenedor). La política de ejecución no es
+            # información de salud y sigue disponible solo por rutas
+            # autenticadas.
             self._send_json(
                 HTTPStatus.OK,
                 {
                     "status": "ok",
                     "service": SERVICE_NAME,
-                    "execution_enabled": self.server.model_calls_enabled,
-                    "magis_execution_enabled": self.server.magis_execution_enabled,
                 },
             )
             return
@@ -648,6 +688,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not isinstance(result_id, str) or not result_id.strip():
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "result_id_required"})
                 return
+            self.trace_candidate_id = result_id  # C-6
             if event_type != "result.accepted":
                 self._send_json(HTTPStatus.BAD_REQUEST, {
                     "error": "unsupported_distribution_event",
@@ -665,6 +706,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     "error": "acceptance_store_unavailable",
                 })
                 return
+            if acceptance:
+                self.trace_decision_id = acceptance.get("decision_id")  # C-6
             if not acceptance or acceptance.get("outcome") != "accepted":
                 self._send_json(HTTPStatus.CONFLICT, {
                     "error": "result_not_independently_accepted",
@@ -727,7 +770,8 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/v1/acceptance":
-            if not self._authorized(require_token=True, required_scope="acceptance:write"):
+            token_payload = self._bearer_payload(required_scope="acceptance:write")
+            if token_payload is None:
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             # Endpoint interno para el verificador independiente
@@ -735,11 +779,30 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not body or "candidate_id" not in body or "outcome" not in body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
+            # C-7: el JWT de aceptación liga `sub` con `verifier_id` cuando
+            # el token declara `sub`. Un token sin `sub` se acepta como
+            # antes (emisores existentes que no lo fijan); un token con
+            # `sub` distinto del verificador que firma la decisión se
+            # rechaza: la separación ya no depende solo del secreto de la
+            # semilla. Requisito del emisor: los tokens de aceptación
+            # deben emitirse con sub=<verifier_id> (ver
+            # verifier/submit_acceptance.py).
+            token_subject = token_payload.get("sub")
+            if (
+                isinstance(token_subject, str)
+                and token_subject.strip()
+                and token_subject != body.get("verifier_id")
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {
+                    "error": "acceptance_token_subject_verifier_mismatch",
+                })
+                return
             try:
                 if "signature" not in body:
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "missing_signature"})
                     return
                 candidate_id = str(body.get("candidate_id") or "")
+                self.trace_candidate_id = candidate_id  # C-6
                 existing = acceptance_store.get_acceptance(candidate_id)
                 replay = existing is not None
                 if existing:
@@ -759,6 +822,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                     if not existing:
                         raise ValueError("La decisión registrada no pudo recuperarse del ledger")
                     outcome = existing.get("outcome")
+                self.trace_decision_id = decision_id  # C-6
 
                 # An accepted decision is not distributable until TaskBus confirms
                 # that every task linked to this result is in the accepted state.
@@ -1137,7 +1201,7 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.FORBIDDEN,
                 {
                     "error": "model_calls_disabled",
-                    "detail": "Enable with CHALAMANDRA_API_ENABLE_MODEL_CALLS=true and configure CHALAMANDRA_API_TOKEN.",
+                    "detail": "Enable with CHALAMANDRA_API_ENABLE_MODEL_CALLS=true and a JWT bearer token with the required scope.",
                 },
             )
             return

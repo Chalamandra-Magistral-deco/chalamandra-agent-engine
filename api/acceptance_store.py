@@ -189,6 +189,7 @@ def get_acceptance(candidate_id: str) -> dict[str, Any] | None:
             return None
         # Reconcile only cryptographically valid duplicate records whose decision
         # semantics are identical. Keep the append-only history untouched and choose
+        # semantics are identical. Keep the append-only history untouched and choose
         # the first persisted record as the stable canonical view. Conflicting outcomes,
         # criteria, reasons, verifier, evidence digest, or trace still fail closed.
         validated = [
@@ -213,3 +214,33 @@ def get_acceptance(candidate_id: str) -> dict[str, Any] | None:
                 "Decisiones de aceptación duplicadas con contenido semántico conflictivo"
             )
         return validated[0]
+
+
+def list_accepted_decisions() -> dict[str, Any]:
+    """List every latest accepted decision, verified, for reconciliation (C-4).
+
+    Returns {"decisions": [...], "invalid_skipped": n}. Records that fail
+    verification (firma, verifier_id, digest o traza) se cuentan y se
+    omiten en lugar de romper la reconciliación: un registro corrupto no
+    debe impedir el reintento de los demás. Solo se devuelven decisiones
+    con outcome "accepted"; las rechazadas no tienen distribución que reintentar.
+    """
+    target = _acceptance_file()
+    store = JsonlIndex(target, ("candidate_id", "decision_id"))
+    decisions: list[dict[str, Any]] = []
+    invalid_skipped = 0
+    with store.locked() as db:
+        latest = store.latest_by_key(db, "candidate_id")
+    for record in latest:
+        candidate_id = record.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id:
+            invalid_skipped += 1
+            continue
+        try:
+            validated = _verify_persisted_record(record, candidate_id)
+        except (OSError, ValueError):
+            invalid_skipped += 1
+            continue
+        if validated.get("outcome") == "accepted":
+            decisions.append(validated)
+    return {"decisions": decisions, "invalid_skipped": invalid_skipped}

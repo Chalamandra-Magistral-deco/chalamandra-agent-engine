@@ -212,18 +212,57 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _undelivered_subscriptions(
+    result_id: str, subscription_ids: list[str]
+) -> list[str]:
+    """Return the subscribers with no durable 'delivered' record for a result.
+
+    C-3: the deliveries ledger is per (result_id, subscription_id), so a
+    subscriber added after the result was dispatched has no record here and
+    must be treated as undelivered, not as already served.
+    """
+    if not subscription_ids:
+        return []
+    store = JsonlIndex(_deliveries_file(), ("result_id", "subscription_id"))
+    undelivered: list[str] = []
+    with store.locked() as db:
+        for subscription_id in subscription_ids:
+            records = store.find_pair(db, result_id, subscription_id)
+            if not any(record.get("status") == "delivered" for record in records):
+                undelivered.append(subscription_id)
+    return undelivered
+
+
+def latest_dispatch(result_id: str) -> dict[str, Any] | None:
+    """Return the newest distribution event for a result, if any (C-4)."""
+    if not isinstance(result_id, str) or not result_id.strip():
+        raise ValueError("result_id inválido")
+    path = _events_file()
+    store = JsonlIndex(path, ("result_id", "event_id"))
+    with store.locked() as db:
+        records = store.find(db, "result_id", result_id)
+        return records[-1] if records else None
+
+
 def reserve_dispatch(
     result_id: str,
     event_id: str,
     trace_id: str,
     *,
     lease_seconds: int = 300,
+    subscription_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Reserve one dispatch for a logical result ID across processes and event IDs.
 
     Completed result IDs are globally deduplicated. A recent in-flight reservation
     blocks concurrent retries. Failed or stale reservations can be retried. All state
     transitions are appended; existing audit records are never rewritten or deleted.
+
+    C-3: when `subscription_ids` is given and the result was already dispatched,
+    the reservation is only deduplicated if every listed subscriber already has
+    a durable 'delivered' record. Subscribers without one (e.g. added after the
+    first dispatch) get a fresh dispatching reservation with the same stable
+    event identity; per-subscriber state decides who is actually re-sent.
     """
     if not isinstance(result_id, str) or not result_id.strip() or len(result_id) > 256:
         raise ValueError("result_id inválido para deduplicación")
@@ -244,14 +283,41 @@ def reserve_dispatch(
         result_matches = store.find(db, "result_id", result_id)
         previous = result_matches[-1] if result_matches else None
         if previous and previous.get("status") == "dispatched":
-            return {
-                "status": "already_dispatched",
+            if subscription_ids is None:
+                return {
+                    "status": "already_dispatched",
+                    "result_id": result_id,
+                    "event_id": previous.get("event_id"),
+                    "trace_id": previous.get("trace_id"),
+                    "delivered_count": previous.get("delivered_count", 0),
+                    "occurred_at": previous.get("occurred_at") or previous.get("recorded_at"),
+                }
+            # C-3: un suscriptor añadido después de `dispatched` nunca recibía
+            # el resultado. Solo se deduplica si TODOS los suscriptores
+            # listados ya tienen entrega registrada; si falta alguno, se abre
+            # una nueva reserva de re-despacho (misma event_id estable).
+            undelivered = _undelivered_subscriptions(result_id, subscription_ids)
+            if not undelivered:
+                return {
+                    "status": "already_dispatched",
+                    "result_id": result_id,
+                    "event_id": previous.get("event_id"),
+                    "trace_id": previous.get("trace_id"),
+                    "delivered_count": previous.get("delivered_count", 0),
+                    "occurred_at": previous.get("occurred_at") or previous.get("recorded_at"),
+                }
+            redispatch = {
                 "result_id": result_id,
                 "event_id": previous.get("event_id"),
-                "trace_id": previous.get("trace_id"),
-                "delivered_count": previous.get("delivered_count", 0),
+                "trace_id": trace_id,
+                "status": "dispatching",
+                "recorded_at": now.isoformat(),
                 "occurred_at": previous.get("occurred_at") or previous.get("recorded_at"),
+                "delivered_count": 0,
+                "redispatch_for": undelivered,
             }
+            store.append(db, redispatch)
+            return {**redispatch, "status": "reserved"}
         if previous and previous.get("status") == "dispatching":
             try:
                 started = datetime.fromisoformat(str(previous["recorded_at"]))

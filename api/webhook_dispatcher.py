@@ -99,8 +99,18 @@ def dispatch_event(
     ]
 
     requested_event_id = event_id or str(uuid.uuid4())
+    # C-3: pasa los suscriptores activos para que un resultado ya
+    # despachado se re-despache solo a quienes aún no lo recibieron.
+    active_subscription_ids: list[str] = []
+    for sub in active_subs:
+        subscription_id = sub.get("subscription_id")
+        if isinstance(subscription_id, str) and subscription_id:
+            active_subscription_ids.append(subscription_id)
     reservation = distribution_store.reserve_dispatch(
-        result_id, requested_event_id, trace_id
+        result_id,
+        requested_event_id,
+        trace_id,
+        subscription_ids=active_subscription_ids,
     )
     reservation_status = reservation.get("status")
     if reservation_status == "already_dispatched":

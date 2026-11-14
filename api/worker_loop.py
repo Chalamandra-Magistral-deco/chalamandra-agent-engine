@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from api import task_bus
 from api import candidate_store
+from api import distribution_reconciler
 from api.task_contracts import (
     CATEDRALX_ECONOMIC_EVALUATION,
     CATEDRALX_OPPORTUNITY_EVALUATION,
@@ -49,6 +50,110 @@ def _catedral_repo() -> Path:
         if (candidate / "BIN" / "catedral").is_file():
             return candidate.resolve()
     return (parent / "CatedralX").resolve()
+
+
+# Env vars the CatedralX subprocess needs to verify a signed snapshot (H-02).
+_SNAPSHOT_SIGNING_ENV_VARS = (
+    "CATEDRALX_SNAPSHOT_SIGNING_SECRET",
+    "CATEDRALX_SNAPSHOT_KEYRING",
+    "CATEDRALX_SNAPSHOT_ACTIVE_KEY_ID",
+    "CATEDRALX_SNAPSHOT_ALLOW_UNSIGNED",
+)
+
+_snapshot_signing_cache: dict = {}
+
+
+def _load_snapshot_signing():
+    """Load CatedralX's snapshot-signing module (H-02) from the repo checkout.
+
+    Returns the module, or None when the checkout predates H-02. Loaded by
+    file location (the module is stdlib-only) so no CatedralX package import
+    runs. Cached per resolved repo path.
+    """
+    repo = str(_catedral_repo())
+    if repo in _snapshot_signing_cache:
+        return _snapshot_signing_cache[repo]
+    module = None
+    try:
+        import importlib.util
+
+        module_path = Path(repo) / "elite" / "PERCEIVE" / "snapshot_signing.py"
+        if module_path.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "catedralx_snapshot_signing", module_path
+            )
+            if spec is not None and spec.loader is not None:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+    except Exception:
+        module = None
+    _snapshot_signing_cache[repo] = module
+    return module
+
+
+def _sign_snapshot(snapshot: dict) -> dict:
+    """Sign the snapshot this worker writes, with CatedralX's own signer (H-02).
+
+    Returns the signed copy when a signing key is configured; otherwise the
+    snapshot unchanged (unsigned). An unsigned snapshot is rejected
+    fail-closed by the CatedralX cycle when it enforces signatures, so a
+    deployment that wants the general route must configure
+    CATEDRALX_SNAPSHOT_SIGNING_SECRET (or the versioned keyring).
+    """
+    module = _load_snapshot_signing()
+    if module is None:
+        return snapshot
+    try:
+        return module.sign_snapshot_payload(snapshot)
+    except Exception:
+        return snapshot
+
+def _verify_evaluation_hash_via_cli(evaluation: dict, kind: str) -> str | None:
+    """Recompute an evaluation_hash with CatedralX's own verifier (C-2).
+
+    `evaluation` is the raw evaluation object (central verdict or full
+    opportunity result); `kind` is "central" or "opportunity". Returns None
+    when the hash verifies, else a BLOCKED reason code. Fail-closed: any
+    invocation problem is a reason, never a silent pass.
+    """
+    import subprocess
+    import tempfile
+
+    if not isinstance(evaluation, dict):
+        return "decision_result_evaluation_hash_verification_failed"
+    fd, temp_path = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(evaluation, stream, ensure_ascii=False, allow_nan=False)
+        allowed = (
+            "CATEDRALX_PATH", "CATEDRALX_PYTHON", "PATH", "PYTHONPATH",
+            "HOME", "TMPDIR",
+        )
+        env = {key: value for key, value in os.environ.items() if key in allowed}
+        env["CATEDRALX_PYTHON"] = sys.executable
+        result = subprocess.run(
+            ["bash", "BIN/catedral", "verify-evaluation-hash",
+             "--input-file", temp_path, "--kind", kind],
+            cwd=_catedral_repo(), env=env, capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+        if result.returncode == 2:
+            return "decision_result_evaluation_hash_verification_error"
+        if result.returncode != 0:
+            return "decision_result_evaluation_hash_verification_failed"
+        try:
+            report = json.loads(result.stdout.strip())
+        except (ValueError, TypeError):
+            return "decision_result_evaluation_hash_verification_failed"
+        if not isinstance(report, dict) or report.get("valid") is not True:
+            return "decision_result_evaluation_hash_verification_failed"
+        return None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        return "decision_result_evaluation_hash_verification_failed"
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 
 def _run_catedralx(payload: dict) -> dict:
     """Ejecuta CatedralX con datos observados y su procedencia original."""
@@ -132,6 +237,11 @@ def _run_catedralx(payload: dict) -> dict:
     if not isinstance(trace_id, str) or not re.fullmatch(r"[0-9a-f]{32}", trace_id) or trace_id == "0" * 32:
         return {"status": "BLOCKED", "reason": "missing_or_invalid_trace_id"}
 
+    # H-02: on this path the worker is the snapshot writer, so it signs what
+    # it writes with CatedralX's own signer. Without a configured key the
+    # snapshot stays unsigned and the cycle rejects it fail-closed.
+    snapshot = _sign_snapshot(snapshot)
+
     fd, temp_path = tempfile.mkstemp(suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(snapshot, stream, ensure_ascii=False, allow_nan=False)
@@ -149,6 +259,7 @@ def _run_catedralx(payload: dict) -> dict:
         "PYTHONPATH",
         "HOME",
         "TMPDIR",
+        *_SNAPSHOT_SIGNING_ENV_VARS,
     )
     env = {k: v for k, v in os.environ.items() if k in _ALLOWED}
     env["CATEDRALX_SNAPSHOT_PATH"] = temp_path
@@ -231,6 +342,15 @@ def _run_catedralx(payload: dict) -> dict:
                 "reason": "catedralx_nonzero_exit",
                 "return_code": result.returncode,
             }
+        # C-2: recomputar el hash con el verificador de CatedralX cuando el
+        # DecisionResult expone el veredicto crudo. Sin campo "evaluation"
+        # (CatedralX anterior a la liberación) se mantiene la validación
+        # por formato ya hecha arriba.
+        evaluation = decision.get("evaluation")
+        if isinstance(evaluation, dict):
+            failure = _verify_evaluation_hash_via_cli(evaluation, "central")
+            if failure is not None:
+                return {"status": "BLOCKED", "reason": failure}
         return decision
     except (OSError, subprocess.TimeoutExpired) as exc:
         # Igual que _run_catedralx_opportunity: un fallo de ejecución del
@@ -306,6 +426,11 @@ def _run_catedralx_opportunity(payload: dict) -> dict:
             or parsed.get("independent_acceptance_required") is not True
         ):
             return {"status": "BLOCKED", "reason": "opportunity_result_contract_invalid"}
+        # C-2: el resultado de oportunidad ES el objeto evaluado; recomputar
+        # su hash con el verificador de CatedralX antes de aceptarlo.
+        failure = _verify_evaluation_hash_via_cli(parsed, "opportunity")
+        if failure is not None:
+            return {"status": "BLOCKED", "reason": failure}
         return parsed
     except (OSError, subprocess.TimeoutExpired, ValueError, TypeError) as exc:
         return {"status": "BLOCKED", "reason": f"catedralx_opportunity_execution_error:{type(exc).__name__}"}
@@ -802,6 +927,15 @@ def process_task(task: dict) -> dict:
                         "digest": __import__("hashlib").sha256(str(result).encode()).hexdigest(),
                     })
                     status = "candidate"
+    except TaskTimeout:
+        # F-6: el timeout durante la ejecución NO se traga aquí. Antes, este
+        # `except Exception` lo convertía en `failed` genérico y la rama de
+        # timeout del loop (_run_worker_loop) solo cubría la publicación
+        # final: era inalcanzable. Al re-lanzarlo, el loop marca la tarea
+        # como failed con reason `timeout_<s>` explícito. El comportamiento
+        # sigue siendo fail-closed (sin candidato, sin publicación, sin
+        # órdenes); solo cambia dónde queda registrado el motivo.
+        raise
     except Exception as e:
         summary = f"Error en ejecución: {str(e)}"
         status = "failed"
@@ -875,9 +1009,23 @@ def _run_worker_loop(stop_event=None):
     poll_interval = float(os.getenv("CHALAMANDRA_WORKER_POLL_INTERVAL", "0.2"))
     if not 0.05 <= poll_interval <= 10:
         raise ValueError("CHALAMANDRA_WORKER_POLL_INTERVAL debe estar entre 0.05 y 10")
+    # C-4: con qué frecuencia el worker reintenta distribuciones fallidas.
+    try:
+        reconcile_interval = int(
+            os.getenv("CHALAMANDRA_DISTRIBUTION_RECONCILE_INTERVAL_SECONDS", "60")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "CHALAMANDRA_DISTRIBUTION_RECONCILE_INTERVAL_SECONDS debe ser entero"
+        ) from exc
+    if not 5 <= reconcile_interval <= 3600:
+        raise ValueError(
+            "CHALAMANDRA_DISTRIBUTION_RECONCILE_INTERVAL_SECONDS debe estar entre 5 y 3600"
+        )
     task_bus.init_db()
     print(f"Worker persistente iniciado pid={os.getpid()} poll={poll_interval}s")
     write_worker_heartbeat("idle")
+    last_distribution_reconcile = 0.0
 
     while stop_event is None or not stop_event.is_set():
         publication_report = candidate_store.reconcile_pending_publications()
@@ -892,6 +1040,23 @@ def _run_worker_loop(stop_event=None):
                 "[worker] candidate publications quarantined "
                 f"conflicted={publication_report['conflicted']}"
             )
+        # C-4: reintento automático y acotado de distribuciones fallidas tras
+        # aceptación. Un fallo del reconciliador nunca tumba el loop.
+        now_mono = time.monotonic()
+        if now_mono - last_distribution_reconcile >= reconcile_interval:
+            last_distribution_reconcile = now_mono
+            try:
+                distribution_report = distribution_reconciler.reconcile_failed_distributions()
+            except Exception as exc:
+                print(f"[worker] distribution reconciliation failed: {exc}")
+            else:
+                if distribution_report["retried"]:
+                    print(
+                        "[worker] distribution reconciled "
+                        f"retried={distribution_report['retried']} "
+                        f"delivered={distribution_report['delivered']} "
+                        f"still_failed={distribution_report['still_failed']}"
+                    )
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task(lease_seconds=WORKER_TASK_LEASE_SECONDS)
         if task:

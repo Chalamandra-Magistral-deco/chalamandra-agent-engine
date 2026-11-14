@@ -13,15 +13,25 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from api.locking import acquire_exclusive_lock
+
 
 class JsonlIndex:
-    def __init__(self, path: Path, fields: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        fields: tuple[str, ...],
+        lock_timeout_seconds: float = 10.0,
+    ) -> None:
         if not fields or len(fields) > 2:
             raise ValueError("JsonlIndex supports one or two indexed fields")
         self.path = Path(path)
         self.fields = fields
         self.lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         self.index_path = self.path.with_suffix(self.path.suffix + ".index.sqlite3")
+        # F-7: espera acotada por el lock del ledger (antes LOCK_EX sin
+        # timeout: un poseedor colgado bloqueaba escrituras para siempre).
+        self.lock_timeout_seconds = lock_timeout_seconds
 
     @contextmanager
     def locked(self) -> Iterator[sqlite3.Connection]:
@@ -29,7 +39,9 @@ class JsonlIndex:
         os.chmod(self.path.parent, 0o700)
         with self.lock_path.open("a", encoding="utf-8") as lock_stream:
             os.chmod(self.lock_path, 0o600)
-            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+            acquire_exclusive_lock(
+                lock_stream.fileno(), timeout_seconds=self.lock_timeout_seconds
+            )
             db = sqlite3.connect(str(self.index_path), timeout=20)
             os.chmod(self.index_path, 0o600)
             try:
