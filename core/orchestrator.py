@@ -21,41 +21,15 @@ from registry.models import MODELS
 load_dotenv("config/.env")
 
 
-def _load_optional_secret(name: str, status: dict[str, str]) -> str | None:
-    """Load a provider key from the environment or Azure Key Vault.
-
-    Key Vault is attempted only when AZURE_KEYVAULT_URI is configured, so
-    local/offline development can continue with Ollama and no Azure setup.
-    Failure to resolve a cloud key must not prevent the local adapter from
-    starting. Only the source/status is recorded; secret values are never
-    included in diagnostics.
-    """
+def _load_optional_provider_key(name: str, status: dict[str, str]) -> str | None:
+    """Load an optional provider key from its environment variable only."""
     value = os.getenv(name)
     if value:
         status[name] = "environment"
         return value
 
-    if not os.getenv("AZURE_KEYVAULT_URI"):
-        status[name] = "not_configured"
-        return None
-
-    try:
-        from security.keyvault import get_secret
-
-        # Azure Key Vault secret names allow letters, digits and hyphens,
-        # not environment-style underscores (for example gemini-api-key).
-        vault_name = name.lower().replace("_", "-")
-        value = get_secret(vault_name)
-    except Exception as exc:
-        status[name] = f"unavailable:{type(exc).__name__}"
-        return None
-
-    if not value:
-        status[name] = "not_found"
-        return None
-
-    status[name] = "azure_key_vault"
-    return value
+    status[name] = "not_configured"
+    return None
 
 
 class Orchestrator:
@@ -71,8 +45,7 @@ class Orchestrator:
         nunca los valores secretos.
 
     Side effects:
-        Puede leer configuración de entorno y, si se configura Azure Key Vault,
-        recuperar secretos al inicializar; al ejecutar modelos guarda trazas.
+        Lee configuración de entorno al inicializar; al ejecutar modelos guarda trazas.
 
     Example:
         orchestrator = Orchestrator()
@@ -97,9 +70,8 @@ class Orchestrator:
 
         Side effects:
             Registra el adapter local Ollama y agrega adaptadores remotos solo cuando las
-            credenciales están disponibles. Puede consultar Azure Key Vault si su URI está
-            configurada y una clave requerida no está en el entorno. No ejecuta modelos durante
-            la inicialización; `credential_status` registra metadatos, nunca valores secretos.
+            credenciales están disponibles en el entorno. No ejecuta modelos durante la
+            inicialización; `credential_status` registra metadatos, nunca valores secretos.
 
         Example:
             orchestrator = Orchestrator()
@@ -116,7 +88,7 @@ class Orchestrator:
             "1", "true", "yes", "on"
         }
         if cloud_enabled:
-            ollama_cloud_key = _load_optional_secret(
+            ollama_cloud_key = _load_optional_provider_key(
                 "OLLAMA_API_KEY", self.credential_status
             )
             if ollama_cloud_key:
@@ -126,25 +98,25 @@ class Orchestrator:
         else:
             self.credential_status["OLLAMA_API_KEY"] = "disabled"
 
-        gemini_key = _load_optional_secret(
+        gemini_key = _load_optional_provider_key(
             "GEMINI_API_KEY", self.credential_status
         )
         if gemini_key:
             self.adapters["gemini"] = GeminiAdapter(api_key=gemini_key)
 
-        deepseek_key = _load_optional_secret(
+        deepseek_key = _load_optional_provider_key(
             "DEEPSEEK_API_KEY", self.credential_status
         )
         if deepseek_key:
             self.adapters["deepseek"] = DeepSeekAdapter(api_key=deepseek_key)
 
-        openai_key = _load_optional_secret(
+        openai_key = _load_optional_provider_key(
             "OPENAI_API_KEY", self.credential_status
         )
         if openai_key:
             self.adapters["gpt"] = GPTAdapter(api_key=openai_key)
 
-        anthropic_key = _load_optional_secret(
+        anthropic_key = _load_optional_provider_key(
             "ANTHROPIC_API_KEY", self.credential_status
         )
         if anthropic_key:

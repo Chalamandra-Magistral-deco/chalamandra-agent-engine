@@ -158,7 +158,6 @@ def test_cloud_adapter_does_not_retry_billable_requests(monkeypatch):
 def test_cloud_adapter_is_opt_in_and_not_verified(monkeypatch):
     monkeypatch.setenv("OLLAMA_CLOUD_ENABLED", "false")
     monkeypatch.setenv("OLLAMA_API_KEY", "test-secret")
-    monkeypatch.delenv("AZURE_KEYVAULT_URI", raising=False)
 
     orchestrator = Orchestrator()
 
@@ -169,7 +168,6 @@ def test_cloud_adapter_is_opt_in_and_not_verified(monkeypatch):
 def test_cloud_adapter_registers_only_with_explicit_opt_in(monkeypatch):
     monkeypatch.setenv("OLLAMA_CLOUD_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_API_KEY", "test-secret")
-    monkeypatch.delenv("AZURE_KEYVAULT_URI", raising=False)
 
     orchestrator = Orchestrator()
     states = orchestrator.adapter_states()

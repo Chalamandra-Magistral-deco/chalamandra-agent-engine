@@ -10,7 +10,6 @@ Motor coordinador Python de Chalamandra Magistral, compuesto por el núcleo `cor
 - `pipeline/`: síntesis, ejecución paralela, análisis dinámico y minería local de términos de búsqueda.
 - `dynamics/`: simulación de dos estados con retardo, análisis de trayectorias, estabilidad y barridos.
 - `telemetry/`: trazas y estadísticas de respuesta.
-- `security/`: cliente de Azure Key Vault.
 - `tools/`: utilidades auxiliares de inspección; `agente_elite.py` es de solo lectura y no forma parte de la imagen de producción.
 - `tests/`: pruebas unitarias e integración simulada.
 
@@ -74,7 +73,6 @@ Ollama es el único adaptador verificado por la suite local actual. Para habilit
 - `OLLAMA_CLOUD_INPUT_USD_PER_MILLION`, `OLLAMA_CLOUD_OUTPUT_USD_PER_MILLION`: precios configurables para estimar el coste; los defaults son $0.30/$1.20 USD por millón de tokens de entrada/salida y no descuentan tokens en caché.
 - `DEFAULT_TIMEOUT_SECONDS`, `DEFAULT_MAX_TOKENS`: valores iniciales de cada `ModelRequest`; los valores explícitos de una solicitud prevalecen.
 - `CHALAMANDRA_SEARCH_TERMS_DIR`: raíz permitida para CSV de minería. La herramienta es de solo lectura y solo propone candidatos; no modifica campañas.
-- `AZURE_KEYVAULT_URI`: necesaria si se llama al helper de Key Vault directamente.
 - `CHALAMANDRA_API_HOST`, `CHALAMANDRA_API_PORT`: la API solo permite loopback; por defecto `127.0.0.1:8766`.
 - Autenticación JWT HS256: todas las rutas salvo `GET /healthz` exigen `Authorization: Bearer <JWT>` con el `scope` de la operación. `CHALAMANDRA_JWT_SECRET` es el secreto general; `CHALAMANDRA_CATEDRALX_JWT_SECRET` es el secreto de la identidad `catedralx-service` y `CHALAMANDRA_MAGIS_JWT_SECRET` el de `magis-service`. La variable antigua `CHALAMANDRA_API_TOKEN` ya no se usa: ningún endpoint la lee.
 - `CHALAMANDRA_API_ENABLE_MODEL_CALLS`: apagado por defecto. Activa planificación/ejecución de tareas con llamadas a modelos.

@@ -50,10 +50,10 @@ jobs:
         run: python -m pytest -q --ignore=CatedralX --junitxml=junit-agents.xml
 
       - name: Ruff lint gate
-        run: python -m ruff check api adapters core dynamics pipeline registry security telemetry tests
+        run: python -m ruff check api adapters core dynamics pipeline registry telemetry tests
 
       - name: Mypy type-check gate
-        run: python -m mypy api adapters core dynamics pipeline registry security telemetry
+        run: python -m mypy api adapters core dynamics pipeline registry telemetry
 
       - name: Preserve test report
         if: always()

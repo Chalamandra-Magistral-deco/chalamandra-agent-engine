@@ -11,8 +11,6 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
-    "azure-identity>=1.19.0",
-    "azure-keyvault-secrets>=4.9.0",
     # dynamics (sistemas dinámicos con retardo)
     "numpy>=2.5",
     "scipy>=1.18",
@@ -41,7 +39,7 @@ ignore_missing_imports = true
 explicit_package_bases = true
 
 [tool.setuptools.packages.find]
-include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "security*", "core*", "api*"]
+include = ["dynamics*", "adapters*", "pipeline*", "registry*", "telemetry*", "config*", "core*", "api*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
