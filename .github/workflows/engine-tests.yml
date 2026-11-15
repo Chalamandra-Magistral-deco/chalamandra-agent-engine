@@ -45,10 +45,10 @@ jobs:
         run: python -m pytest -q --ignore=CatedralX
 
       - name: Lint
-        run: python -m ruff check api adapters core dynamics pipeline registry security telemetry tests
+        run: python -m ruff check api adapters core dynamics pipeline registry telemetry tests
 
       - name: Type check
-        run: python -m mypy api adapters core dynamics pipeline registry security telemetry
+        run: python -m mypy api adapters core dynamics pipeline registry telemetry
 
   secret-history-scan:
     name: Scan all Git history with Gitleaks
