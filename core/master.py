@@ -44,9 +44,8 @@ class Master:
         Inicializa los componentes centrales y registra las herramientas integradas.
 
         Side effects:
-            Construye el orquestador y consulta la configuración de credenciales.
-            Si `AZURE_KEYVAULT_URI` está configurado y falta una clave de proveedor,
-            la inicialización puede consultar Azure Key Vault. No ejecuta herramientas.
+            Construye el orquestador y consulta las credenciales presentes en el entorno.
+            No ejecuta herramientas.
 
         Example:
             master = Master()
