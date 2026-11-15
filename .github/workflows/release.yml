@@ -21,12 +21,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 2da641375585788addc0460ef165c702e5c21a86
 
       - name: Checkout canonical CatedralX source for tests
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: a5fed4154dba0f5b92564b2917630715e326c92b
+          ref: b1841e18b9d64d215d7382e4ca9122efb959bb57
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -72,12 +74,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 2da641375585788addc0460ef165c702e5c21a86
 
       - name: Checkout canonical CatedralX source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: a5fed4154dba0f5b92564b2917630715e326c92b
+          ref: b1841e18b9d64d215d7382e4ca9122efb959bb57
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
