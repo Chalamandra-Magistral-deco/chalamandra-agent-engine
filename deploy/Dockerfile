@@ -38,7 +38,6 @@ COPY pipeline/ ./pipeline/
 COPY adapters/ ./adapters/
 COPY config/ ./config/
 COPY registry/ ./registry/
-COPY security/ ./security/
 COPY telemetry/ ./telemetry/
 COPY dynamics/ ./dynamics/
 # Dependencias de runtime pinneadas (requirements.lock, generado con
