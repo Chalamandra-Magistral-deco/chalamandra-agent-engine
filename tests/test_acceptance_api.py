@@ -26,7 +26,7 @@ def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write", subjec
     import time
 
     payload = {"scope": scopes, "exp": int(time.time()) + 3600}
-    if subject:
+    if subject is not None:
         payload["sub"] = subject
     return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
@@ -226,7 +226,7 @@ def test_rejected_acceptance_closes_taskbus_without_distribution(
         status, body = _post(
             f"{api_server}/v1/acceptance",
             payload,
-            headers={"Authorization": f"Bearer {make_jwt()}"},
+            headers={"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
     assert status == 201
     assert body["outcome"] == "rejected"
@@ -255,7 +255,7 @@ def test_acceptance_blocks_distribution_until_task_state_is_accepted(
     ):
         status, body = _post(
             f"{api_server}/v1/acceptance", payload,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
         assert status == 409
         assert body["error"] == "acceptance_operational_sync_pending"
@@ -269,7 +269,7 @@ def test_acceptance_blocks_distribution_until_task_state_is_accepted(
         with patch("api.task_bus.get_result_task_statuses", return_value=task_statuses):
             repeated_status, repeated_body = _post(
                 f"{api_server}/v1/acceptance", payload,
-                {"Authorization": f"Bearer {make_jwt()}"},
+                {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
             )
         assert repeated_status == 201
         assert repeated_body["idempotent_replay"] is True
@@ -304,7 +304,7 @@ def test_acceptance_reports_distribution_pending_when_no_delivery_succeeds(
     ):
         status, body = _post(
             f"{api_server}/v1/acceptance", payload,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
         assert status == 503
         assert body["error"] == "acceptance_recorded_distribution_pending"
@@ -334,7 +334,7 @@ def test_acceptance_conflicting_replay_is_rejected(
         patch("api.webhook_dispatcher.dispatch_event", return_value=1),
     ):
         status, _ = _post(f"{api_server}/v1/acceptance", payload,
-                          {"Authorization": f"Bearer {make_jwt()}"})
+                          {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"})
         assert status == 201
 
         conflicting = dict(payload)
@@ -343,7 +343,7 @@ def test_acceptance_conflicting_replay_is_rejected(
         conflicting["signature"] = sign_test_decision(conflicting)
         repeated_status, repeated_body = _post(
             f"{api_server}/v1/acceptance", conflicting,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
         assert repeated_status == 409
         assert repeated_body["error"] == "acceptance_already_recorded"
@@ -357,10 +357,46 @@ def test_acceptance_fails_closed_without_configured_verifier_identity(api_server
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "CHALAMANDRA_VERIFIER_ID" in body["error"]
+
+
+@pytest.mark.parametrize(
+    "subject",
+    [None, "", "   ", 123, "different-verifier"],
+)
+def test_acceptance_rejects_missing_or_mismatched_jwt_subject_without_side_effects(
+    api_server, tmp_path, subject
+):
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+    token = make_jwt() if subject is None else make_jwt(subject=subject)
+    ledger = tmp_path / "acceptance_store.jsonl"
+
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=ledger),
+        patch("api.acceptance_store.record_acceptance") as record_acceptance,
+        patch("api.candidate_store.get_candidate") as get_candidate,
+        patch("api.task_bus.mark_result_accepted") as mark_accepted,
+        patch("api.task_bus.mark_result_rejected") as mark_rejected,
+        patch("api.webhook_dispatcher.dispatch_event") as dispatch,
+    ):
+        status, body = _post(
+            f"{api_server}/v1/acceptance",
+            payload,
+            {"Authorization": f"Bearer {token}"},
+        )
+
+    assert status == 401
+    assert body["error"] == "acceptance_token_subject_verifier_mismatch"
+    assert not ledger.exists()
+    record_acceptance.assert_not_called()
+    get_candidate.assert_not_called()
+    mark_accepted.assert_not_called()
+    mark_rejected.assert_not_called()
+    dispatch.assert_not_called()
 
 
 def test_acceptance_rejects_signed_but_unexpected_verifier_identity(api_server):
@@ -370,7 +406,7 @@ def test_acceptance_rejects_signed_but_unexpected_verifier_identity(api_server):
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="unexpected-verifier")}"},
     )
     assert status == 400
     assert "identidad del verificador" in body["error"].lower()
@@ -381,7 +417,7 @@ def test_acceptance_without_signature_fails(api_server):
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "signature" in body["error"].lower() or "firma" in body["error"].lower()
@@ -393,7 +429,7 @@ def test_acceptance_with_invalid_signature_fails(api_server):
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "firma" in body["error"].lower()
@@ -413,7 +449,7 @@ def test_legacy_shared_hmac_signature_is_rejected(api_server, monkeypatch):
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "firma" in body["error"].lower()
@@ -426,7 +462,7 @@ def test_acceptance_with_tampered_field_fails(api_server):
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "firma" in body["error"].lower()
@@ -447,7 +483,7 @@ def test_acceptance_rejects_trace_id_not_owned_by_candidate(
     with patch("api.webhook_dispatcher.dispatch_event") as dispatch:
         status, body = _post(
             f"{api_server}/v1/acceptance", payload,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
     assert status == 400
     assert "trace_id" in body["error"]
@@ -474,14 +510,14 @@ def test_acceptance_replay_rejects_payload_mutation_with_reused_signature(
     ):
         first_status, _ = _post(
             f"{api_server}/v1/acceptance", payload,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
         assert first_status == 201
         tampered = dict(payload)
         tampered["reasons"] = ["payload changed after signing"]
         replay_status, replay_body = _post(
             f"{api_server}/v1/acceptance", tampered,
-            {"Authorization": f"Bearer {make_jwt()}"},
+            {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
         )
     assert replay_status == 409
     assert replay_body["error"] == "acceptance_already_recorded"
@@ -505,7 +541,7 @@ def test_acceptance_cannot_publish_blocked_candidate(
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
-        {"Authorization": f"Bearer {make_jwt()}"},
+        {"Authorization": f"Bearer {make_jwt(subject="independent-test-verifier")}"},
     )
     assert status == 400
     assert "resultados bloqueados" in body["error"]
