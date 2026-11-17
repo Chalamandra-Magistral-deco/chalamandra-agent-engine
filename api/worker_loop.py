@@ -15,6 +15,7 @@ from pathlib import Path
 from api import task_bus
 from api import candidate_store
 from api import distribution_reconciler
+from api import catedralx_feedback
 from api.task_contracts import (
     CATEDRALX_ECONOMIC_EVALUATION,
     CATEDRALX_OPPORTUNITY_EVALUATION,
@@ -1034,10 +1035,24 @@ def _run_worker_loop(stop_event=None):
         raise ValueError(
             "CHALAMANDRA_DISTRIBUTION_RECONCILE_INTERVAL_SECONDS debe estar entre 5 y 3600"
         )
+    # C-5: sincroniza aceptaciones independientes con el ledger de CatedralX.
+    try:
+        feedback_interval = int(
+            os.getenv("CHALAMANDRA_FEEDBACK_RECONCILE_INTERVAL_SECONDS", "60")
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "CHALAMANDRA_FEEDBACK_RECONCILE_INTERVAL_SECONDS debe ser entero"
+        ) from exc
+    if not 5 <= feedback_interval <= 3600:
+        raise ValueError(
+            "CHALAMANDRA_FEEDBACK_RECONCILE_INTERVAL_SECONDS debe estar entre 5 y 3600"
+        )
     task_bus.init_db()
     print(f"Worker persistente iniciado pid={os.getpid()} poll={poll_interval}s")
     write_worker_heartbeat("idle")
     last_distribution_reconcile = 0.0
+    last_feedback_reconcile = 0.0
 
     while stop_event is None or not stop_event.is_set():
         # A transient outbox/JSONL failure must not terminate the worker loop.
@@ -1074,6 +1089,27 @@ def _run_worker_loop(stop_event=None):
                         f"retried={distribution_report['retried']} "
                         f"delivered={distribution_report['delivered']} "
                         f"still_failed={distribution_report['still_failed']}"
+                    )
+        # C-5: el retorno al ledger es automático, idempotente y fail-closed.
+        # Solo se activa cuando la identidad y la clave pública del verificador
+        # están configuradas en el entorno del worker.
+        now_mono = time.monotonic()
+        verifier_configured = bool(
+            os.getenv("CHALAMANDRA_VERIFIER_PUBLIC_KEY", "").strip()
+            and os.getenv("CHALAMANDRA_VERIFIER_ID", "").strip()
+        )
+        if verifier_configured and now_mono - last_feedback_reconcile >= feedback_interval:
+            last_feedback_reconcile = now_mono
+            try:
+                feedback_report = catedralx_feedback.reconcile_feedback_once()
+            except Exception as exc:
+                print(f"[worker] CatedralX feedback reconciliation failed: {exc}")
+            else:
+                if feedback_report["processed_count"] or feedback_report["errors"]:
+                    print(
+                        "[worker] CatedralX feedback reconciled "
+                        f"processed={feedback_report['processed_count']} "
+                        f"errors={len(feedback_report['errors'])}"
                     )
         write_worker_heartbeat("idle")
         task = task_bus.get_next_task(lease_seconds=WORKER_TASK_LEASE_SECONDS)
