@@ -144,16 +144,6 @@ for path in ("/healthz", "/v1/inspect", "/v1/agents", "/v1/tools"):
 PY
 ```
 
-Para instalar el servicio de usuario en un host Linux administrado por el operador (opcional):
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp deploy/systemd/chalamandra-agents-api.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now chalamandra-agents-api.service
-systemctl --user status chalamandra-agents-api.service
-```
-
 Todas las rutas salvo `GET /healthz` requieren `Authorization: Bearer <JWT HS256>` con el `scope` de la operación. La API limita el tamaño del cuerpo a 64 KiB, no acepta campos extra en los contratos y no expone shell ni CORS. Sin JWT válido, el modo local solo ofrece `GET /healthz`. Las llamadas a modelos están desactivadas por defecto; el acceso remoto mediante HTTP directo está bloqueado. Para integrar otro sistema, usa un túnel privado autenticado o proxy TLS tras una revisión de permisos.
 
 ### Docker Compose portable
@@ -177,15 +167,11 @@ docker compose config --quiet
 docker compose up -d
 ```
 
-Las operaciones FEX se ejecutan de forma puntual en el perfil `lifecycle`; no dependen de systemd, cron ni de rutas de una VM. El servicio normal API/Worker no las lanza automáticamente:
+El despacho de ciclos FEX se ejecuta de forma puntual en el perfil `lifecycle`; no depende de systemd, cron ni de rutas de una VM. La reconciliación de feedback firmado se ejecuta desde el worker persistente cuando están configurados `CHALAMANDRA_VERIFIER_PUBLIC_KEY` y `CHALAMANDRA_VERIFIER_ID` en `config/worker.env`.
 
 ```bash
 # Solo despacha ciclos que ya tengan measure → evaluate → propose → authorize.
 docker compose --profile lifecycle run --rm cycle-dispatch
-
-# Después de que el verificador independiente registre la aceptación/rechazo,
-# verifica la firma y el digest y devuelve verify → feedback al ledger FEX.
-docker compose --profile lifecycle run --rm feedback-reconcile
 ```
 
 `cycle-dispatch` registra `run_id`, `task_id` y `trace_id`; el estado del run se consulta mediante `GET /internal/v1/orchestration/runs/{run_id}` con scope `orchestration:read`. El reconciliador de feedback no firma decisiones ni acepta candidatos: consume únicamente registros ya firmados y persistidos por Agents.
@@ -223,7 +209,7 @@ Las pruebas predeterminadas no llaman a proveedores de nube ni generan gasto por
 
 ## Límites operativos
 
-- `Master` se consume desde Python y tiene una API HTTP local de loopback; la unidad `systemd --user` está versionada en `deploy/systemd/`. La persistencia de ese servicio tras cerrar sesión depende de la configuración de linger del usuario en el host Linux.
+- La ejecución persistente soportada para API y worker es Docker Compose, con volúmenes nombrados. No se mantienen unidades systemd ligadas a una VM o a un usuario del sistema.
 - Una habilidad solo se marca como verificada cuando existe evidencia local de prueba; las capacidades declaradas por un proveedor no elevan por sí solas el estado.
 - La herramienta `search_term_miner` nunca escribe en Google Ads. Solo lee el CSV contenido en el directorio permitido y devuelve recomendaciones candidatas.
 - Los límites de paso y los valores no finitos de la simulación se validan antes de calcular para reducir el riesgo de asignaciones excesivas o trayectorias inválidas.
