@@ -155,7 +155,7 @@ def test_reconciler_repairs_acceptance_task_state_before_dispatch(monkeypatch, v
 
 
 def test_reconciler_fails_closed_when_task_state_cannot_be_synchronized(monkeypatch, verifier_env):
-    candidate_id = _accept_candidate(monkeypatch)
+    _accept_candidate(monkeypatch)
     monkeypatch.setattr(
         task_bus,
         "get_result_task_statuses",
