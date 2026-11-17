@@ -1133,3 +1133,42 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
     blocked = worker_loop._run_catedralx(payload)
     assert blocked["status"] == "BLOCKED"
     assert blocked["reason"] == "decision_result_evaluation_hash_verification_failed"
+
+
+def test_worker_loop_reconciles_verified_feedback_into_catedralx(monkeypatch):
+    from unittest.mock import Mock
+
+    class StopAfterOneWait:
+        stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, _seconds):
+            self.stopped = True
+
+    monkeypatch.setenv("CHALAMANDRA_WORKER_POLL_INTERVAL", "0.05")
+    monkeypatch.setenv("CHALAMANDRA_DISTRIBUTION_RECONCILE_INTERVAL_SECONDS", "60")
+    monkeypatch.setenv("CHALAMANDRA_FEEDBACK_RECONCILE_INTERVAL_SECONDS", "60")
+    monkeypatch.setenv("CHALAMANDRA_VERIFIER_PUBLIC_KEY", "a" * 64)
+    monkeypatch.setenv("CHALAMANDRA_VERIFIER_ID", "worker-feedback-test")
+    monkeypatch.setattr(worker_loop.task_bus, "init_db", lambda: None)
+    monkeypatch.setattr(
+        worker_loop.candidate_store, "reconcile_pending_publications",
+        lambda: {"published": 0, "recovered": 0, "already_present": 0, "conflicted": 0},
+    )
+    monkeypatch.setattr(
+        worker_loop.distribution_reconciler, "reconcile_failed_distributions",
+        lambda: {"retried": 0, "delivered": 0, "still_failed": 0},
+    )
+    feedback = Mock(return_value={"processed_count": 1, "errors": []})
+    monkeypatch.setattr(
+        worker_loop.catedralx_feedback, "reconcile_feedback_once", feedback
+    )
+    monkeypatch.setattr(worker_loop.task_bus, "get_next_task", lambda **_kwargs: None)
+    monkeypatch.setattr(worker_loop, "write_worker_heartbeat", lambda *_a, **_k: None)
+    monkeypatch.setattr(worker_loop.time, "monotonic", lambda: 100.0)
+
+    worker_loop._run_worker_loop(StopAfterOneWait())
+
+    feedback.assert_called_once_with()
