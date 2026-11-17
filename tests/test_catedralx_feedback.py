@@ -169,6 +169,33 @@ def test_fex_full_lifecycle_through_api_worker_and_feedback(
     )
     monkeypatch.setenv("CHALAMANDRA_API_ENABLE_MODEL_CALLS", "false")
     monkeypatch.setenv("CATEDRALX_PATH", str(CATEDRALX_ROOT))
+    monkeypatch.setenv("CHALAMANDRA_WEBHOOK_SECRET", "synthetic-webhook-secret-" + "x" * 16)
+
+    # Exercise the real durable dispatcher without making a network request.
+    # The safe target is a synthetic HTTPS receiver and post_json records a
+    # successful HTTP response; no production endpoint or side effect is used.
+    from api import subscription_store, webhook_dispatcher
+
+    monkeypatch.setattr(
+        subscription_store,
+        "resolve_safe_url",
+        lambda _url: SimpleNamespace(
+            scheme="https",
+            hostname="receiver.test",
+            port=443,
+            request_target="/accept",
+            addresses=("203.0.113.10",),
+        ),
+    )
+    monkeypatch.setattr(
+        webhook_dispatcher,
+        "post_json",
+        lambda _target, *, data, headers, timeout: 204,
+    )
+    subscription_store.create_subscription(
+        "https://receiver.test/accept",
+        ["result.accepted"],
+    )
 
     # The existing helper installs a test-only identity verifier. A separate
     # test in this module verifies real Ed25519 approver assertions and nonce use.
