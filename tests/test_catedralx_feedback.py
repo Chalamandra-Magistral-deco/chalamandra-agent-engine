@@ -189,22 +189,17 @@ def test_fex_full_lifecycle_through_api_worker_and_feedback(
         "expected_outcome": "Produce a candidate for independent review.",
         "verification_plan": "Compare qualified leads in the next approved period.",
     }
+    # Model CatedralX's canonical upstream attestation: the service JWT is
+    # authenticated by the API, which injects trusted ingress metadata. The
+    # worker then accepts only these canonical verified-identity claims.
+    # Cryptographic human-assertion verification is covered by a separate test.
     authorization = {
         "approved": True,
         "approver": "test-owner",
         "rationale": "Synthetic authorization for analysis only.",
-        "identity_assertion": {
-            "signed": "test-only-assertion",
-            "subject": "test-owner",
-        },
-        "identity_context": {
-            "purpose": "catedralx_economic_cycle_authorization",
-            "cycle_id": cycle_id,
-            "cycle_digest": "a" * 64,
-            "proposal": proposal,
-            "measurement": measurement,
-            "verify_at": int(time.time()),
-        },
+        "identity_verified": True,
+        "identity_verification": "APPROVER_IDENTITY_VERIFIER",
+        "identity_permissions": ["economic_cycle_authorize"],
     }
     payload = {
         "origin": "CatedralX.FEX.GOVERNANCE.economic_cycle",
