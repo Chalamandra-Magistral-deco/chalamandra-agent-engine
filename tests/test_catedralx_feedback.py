@@ -163,7 +163,7 @@ def test_fex_full_lifecycle_through_api_worker_and_feedback(
     state_root = tmp_path / "state"
     monkeypatch.setenv("CHALAMANDRA_STATE_DIR", str(state_root))
     monkeypatch.setenv("CHALAMANDRA_CANDIDATE_HMAC_KEY", "ab" * 32)
-    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", "synthetic-acceptance-api-secret")
+    monkeypatch.setenv("CHALAMANDRA_JWT_SECRET", "synthetic-acceptance-api-secret-x")
     monkeypatch.setenv(
         "CHALAMANDRA_CATEDRALX_JWT_SECRET", "synthetic-catedralx-service-secret"
     )
