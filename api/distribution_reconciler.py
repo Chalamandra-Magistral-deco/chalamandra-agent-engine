@@ -1,24 +1,11 @@
 """Reconciliación periódica de distribuciones fallidas tras aceptación (C-4).
 
-Antes, una distribución fallida tras POST /v1/acceptance solo se reintentaba
-a mano (replay del POST o /internal/v1/distributions). Este reconciliador lo
-hace el worker de forma automática y acotada:
-
-- Solo mira decisiones aceptadas (las rechazadas no se distribuyen).
-- Solo reintenta si el último evento de distribución es 'failed' o no hay
-  evento; un 'dispatched' o un 'dispatching' vigente no se toca.
-- Acota el reintento con un intervalo mínimo entre intentos por resultado
-  (defecto 300 s, CHALAMANDRA_DISTRIBUTION_RETRY_INTERVAL_SECONDS): sin él,
-  el worker reintentaría en cada iteración y llenaría el ledger de eventos
-  fallidos.
-- Nunca levanta excepciones por resultado: un fallo de despacho se cuenta
-  como still_failed y la reconciliación sigue con los demás.
-
-Elección frente a un endpoint de reintento documentado: el endpoint manual ya
-existe (/internal/v1/distributions); lo que faltaba era el reintento
-automático, y el worker ya es el proceso que reconcilia publicaciones
-pendientes (candidate_store.reconcile_pending_publications), así que este
-reconciliador sigue ese mismo patrón en el mismo loop.
+El worker reintenta distribuciones aceptadas con intervalo acotado. Antes de
+despachar, también repara la sincronización del TaskBus: una decisión firmada
+puede haberse persistido justo antes de que el proceso cayera al actualizar
+los estados operativos. La aceptación criptográfica es la fuente de verdad,
+pero no basta para distribuir hasta que todas las tareas vinculadas estén
+marcadas accepted.
 """
 from __future__ import annotations
 
@@ -26,7 +13,12 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from api import acceptance_store, distribution_store, webhook_dispatcher
+from api import (
+    acceptance_store,
+    distribution_store,
+    task_bus,
+    webhook_dispatcher,
+)
 
 DEFAULT_RETRY_INTERVAL_SECONDS = 300
 DEFAULT_DISPATCH_LEASE_SECONDS = 300
@@ -61,12 +53,25 @@ def _parse_time(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _synchronize_accepted_tasks(result_id: str) -> bool:
+    """Repair the acceptance-to-TaskBus transition; fail closed without task rows."""
+    task_states = task_bus.get_result_task_statuses(result_id)
+    if not task_states:
+        return False
+    if any(item.get("status") != "accepted" for item in task_states):
+        task_bus.mark_result_accepted(result_id)
+        task_states = task_bus.get_result_task_statuses(result_id)
+    return bool(task_states) and all(
+        item.get("status") == "accepted" for item in task_states
+    )
+
+
 def reconcile_failed_distributions(
     *,
     min_interval_seconds: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
-    """Retry accepted results whose last distribution failed or never ran."""
+    """Retry accepted results only after TaskBus confirms operational acceptance."""
     interval = (
         min_interval_seconds
         if min_interval_seconds is not None
@@ -83,12 +88,24 @@ def reconcile_failed_distributions(
         "still_failed": 0,
         "skipped_throttled": 0,
         "skipped_invalid": int(listing["invalid_skipped"]),
+        "skipped_operational_sync": 0,
     }
     for decision in listing["decisions"]:
         result_id = str(decision["candidate_id"])
         trace_id = str(decision["trace_id"])
         decision_id = str(decision["decision_id"])
         report["examined"] += 1
+
+        # Recover a crash between durable acceptance and TaskBus status update.
+        # Never distribute an orphaned result or one with blocked/failed tasks.
+        try:
+            operationally_accepted = _synchronize_accepted_tasks(result_id)
+        except Exception:
+            operationally_accepted = False
+        if not operationally_accepted:
+            report["skipped_operational_sync"] += 1
+            continue
+
         latest = distribution_store.latest_dispatch(result_id)
         if latest is not None and latest.get("status") == "dispatched":
             continue
@@ -104,7 +121,6 @@ def reconcile_failed_distributions(
             and age is not None
             and age < DEFAULT_DISPATCH_LEASE_SECONDS
         ):
-            # Reserva en vuelo vigente: la deja el lease, no este reconciliador.
             continue
         if age is not None and age < interval:
             report["skipped_throttled"] += 1
