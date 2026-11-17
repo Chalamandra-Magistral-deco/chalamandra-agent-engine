@@ -149,6 +149,7 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
                 "decision": "hold",
                 "evaluation_hash": "b" * 64,
                 "evaluation_gate": "ACCEPTED",
+                "evaluation": {"evaluation_hash": "b" * 64},
                 "evidence": [],
                 "assumptions": [],
                 "risks": [],
@@ -162,6 +163,11 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
+    monkeypatch.setattr(
+        worker_loop,
+        "_verify_evaluation_hash_via_cli",
+        lambda evaluation, kind: None,
+    )
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     monkeypatch.setenv("CATEDRALX_STATE_PATH", "/tmp/state-test.json")
@@ -833,6 +839,7 @@ def test_catedralx_snapshot_is_signed_when_key_configured(monkeypatch, tmp_path)
                 "decision": "hold",
                 "evaluation_hash": "b" * 64,
                 "evaluation_gate": "ACCEPTED",
+                "evaluation": {"evaluation_hash": "b" * 64},
                 "evidence": [],
                 "assumptions": [],
                 "risks": [],
@@ -845,6 +852,11 @@ def test_catedralx_snapshot_is_signed_when_key_configured(monkeypatch, tmp_path)
         }
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
+    monkeypatch.setattr(
+        worker_loop,
+        "_verify_evaluation_hash_via_cli",
+        lambda evaluation, kind: None,
+    )
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setenv(
         "CATEDRALX_SNAPSHOT_SIGNING_SECRET", "worker-loop-test-signing-key-32-bytes!"
@@ -1062,6 +1074,46 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
     result = worker_loop._run_catedralx(payload)
     assert result["status"] in {"ACCEPTED", "UNCERTAIN", "REJECTED", "BLOCKED_MISSING_INPUT"}
     assert result["evaluation_hash"] == decision["evaluation_hash"]
+
+    # Un hash exterior diferente debe bloquearse aunque el hash interno
+    # de la evaluación sea válido.
+    mismatched_outer = copy.deepcopy(decision)
+    mismatch_hash = "0" * 64
+    if mismatch_hash == decision["evaluation_hash"]:
+        mismatch_hash = "1" * 64
+    mismatched_outer["evaluation_hash"] = mismatch_hash
+
+    def fake_motor_result(candidate):
+        def fake_run_candidate(
+            args, *, cwd, env, capture_output, text, timeout, check=False
+        ):
+            if "verify-evaluation-hash" in args:
+                return real_run(
+                    args, cwd=cwd, env=env, capture_output=capture_output,
+                    text=text, timeout=timeout, check=check,
+                )
+            output = {"status": "ANALYSIS_COMPLETE", "decision_result": candidate}
+            return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+        return fake_run_candidate
+
+    monkeypatch.setattr(
+        subprocess, "run", fake_motor_result(mismatched_outer)
+    )
+    blocked_mismatch = worker_loop._run_catedralx(payload)
+    assert blocked_mismatch["status"] == "BLOCKED"
+    assert blocked_mismatch["reason"] == "decision_result_evaluation_hash_mismatch"
+
+    # La ausencia de evaluación cruda tampoco puede pasar por compatibilidad
+    # heredada basada únicamente en el formato del hash.
+    missing_evaluation = copy.deepcopy(decision)
+    missing_evaluation.pop("evaluation")
+
+    monkeypatch.setattr(
+        subprocess, "run", fake_motor_result(missing_evaluation)
+    )
+    blocked_missing = worker_loop._run_catedralx(payload)
+    assert blocked_missing["status"] == "BLOCKED"
+    assert blocked_missing["reason"] == "decision_result_evaluation_missing_or_invalid"
 
     tampered = copy.deepcopy(decision)
     # OJO: en este veredicto `score` ya es 0 (BLOCKED_UNCERTAINTY); manipular

@@ -342,15 +342,27 @@ def _run_catedralx(payload: dict) -> dict:
                 "reason": "catedralx_nonzero_exit",
                 "return_code": result.returncode,
             }
-        # C-2: recomputar el hash con el verificador de CatedralX cuando el
-        # DecisionResult expone el veredicto crudo. Sin campo "evaluation"
-        # (CatedralX anterior a la liberación) se mantiene la validación
-        # por formato ya hecha arriba.
+        # C-2: la evaluación cruda es obligatoria. No aceptar resultados
+        # antiguos que solo proporcionen un hash con formato válido.
         evaluation = decision.get("evaluation")
-        if isinstance(evaluation, dict):
-            failure = _verify_evaluation_hash_via_cli(evaluation, "central")
-            if failure is not None:
-                return {"status": "BLOCKED", "reason": failure}
+        if not isinstance(evaluation, dict):
+            return {
+                "status": "BLOCKED",
+                "reason": "decision_result_evaluation_missing_or_invalid",
+            }
+
+        # El hash del contrato debe identificar exactamente la evaluación
+        # que se entrega al verificador independiente.
+        if evaluation.get("evaluation_hash") != decision["evaluation_hash"]:
+            return {
+                "status": "BLOCKED",
+                "reason": "decision_result_evaluation_hash_mismatch",
+            }
+
+        # Recalcular siempre el hash con el verificador canónico de CatedralX.
+        failure = _verify_evaluation_hash_via_cli(evaluation, "central")
+        if failure is not None:
+            return {"status": "BLOCKED", "reason": failure}
         return decision
     except (OSError, subprocess.TimeoutExpired) as exc:
         # Igual que _run_catedralx_opportunity: un fallo de ejecución del
