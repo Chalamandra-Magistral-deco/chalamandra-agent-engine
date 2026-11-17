@@ -359,3 +359,67 @@ def test_model_cannot_override_catedralx_infrastructure_paths(
         asyncio.run(master.execute_agent_tool_call("analyst", tool_call))
 
     assert bridge._ENGINE_MODULE is None
+
+
+def test_prepare_engine_reuses_existing_transductor_when_path_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "hormonas.json"
+    equivalent_path = tmp_path / "state" / "." / "hormonas.json"
+
+    existing = FakeProcessor(output_path=equivalent_path)
+    engine = SimpleNamespace(transductor=existing)
+    module = SimpleNamespace(
+        _think_orchestrator=engine,
+        TransductorEndocrino=FakeProcessor,
+    )
+
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
+
+    bridge._prepare_engine(module, state_path)
+
+    assert engine.transductor is existing
+    assert bridge._ENGINE_STATE_PATH == state_path.resolve()
+
+
+def test_prepare_engine_replaces_transductor_when_path_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    previous = FakeProcessor(output_path=tmp_path / "previous.json")
+    state_path = tmp_path / "new" / "hormonas.json"
+    engine = SimpleNamespace(transductor=previous)
+    module = SimpleNamespace(
+        _think_orchestrator=engine,
+        TransductorEndocrino=FakeProcessor,
+    )
+
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
+
+    bridge._prepare_engine(module, state_path)
+
+    assert engine.transductor is not previous
+    assert isinstance(engine.transductor, FakeProcessor)
+    assert engine.transductor.output_path == state_path.resolve()
+
+
+def test_prepare_engine_replaces_incompatible_transductor_even_when_cached(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "hormonas.json"
+    incompatible = SimpleNamespace(output_path=state_path)
+    engine = SimpleNamespace(transductor=incompatible)
+    module = SimpleNamespace(
+        _think_orchestrator=engine,
+        TransductorEndocrino=FakeProcessor,
+    )
+
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", state_path.resolve())
+
+    bridge._prepare_engine(module, state_path)
+
+    assert engine.transductor is not incompatible
+    assert isinstance(engine.transductor, FakeProcessor)
+    assert engine.transductor.output_path == state_path.resolve()

@@ -198,18 +198,30 @@ def _prepare_engine(module: Any, state_path: Path) -> None:
 
     global _ENGINE_STATE_PATH
 
-    if _ENGINE_STATE_PATH == state_path:
-        return
-
     engine = getattr(module, "_think_orchestrator", None)
     processor_type = getattr(module, "TransductorEndocrino", None)
-    if engine is None or processor_type is None:
+    if engine is None or not isinstance(processor_type, type):
         raise RuntimeError("La interfaz de razonamiento de CatedralX no es compatible.")
 
-    # Estado persistente fuera del código fuente; por defecto, ~/.local/state/...
-    # Al crear el procesador, el estado se carga desde state_path si existe.
-    engine.transductor = processor_type(output_path=state_path)
-    _ENGINE_STATE_PATH = state_path
+    desired_path = Path(state_path).expanduser().resolve()
+    current = getattr(engine, "transductor", None)
+    current_path = getattr(current, "output_path", None)
+
+    # Reutilizar el transductor canónico cuando ya tiene el estado solicitado.
+    # Comparar rutas normalizadas evita reemplazos por diferencias sintácticas.
+    if isinstance(current, processor_type) and current_path is not None:
+        try:
+            existing_path = Path(current_path).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            existing_path = None
+
+        if existing_path == desired_path:
+            _ENGINE_STATE_PATH = desired_path
+            return
+
+    # Inicializar solamente cuando falta una instancia compatible o cambia la ruta.
+    engine.transductor = processor_type(output_path=desired_path)
+    _ENGINE_STATE_PATH = desired_path
 
 
 def _finite_number(name: str, value: Any) -> float:
