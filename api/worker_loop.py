@@ -1040,18 +1040,24 @@ def _run_worker_loop(stop_event=None):
     last_distribution_reconcile = 0.0
 
     while stop_event is None or not stop_event.is_set():
-        publication_report = candidate_store.reconcile_pending_publications()
-        if publication_report["published"]:
-            print(
-                "[worker] candidate publications reconciled "
-                f"recovered={publication_report['recovered']} "
-                f"already_present={publication_report['already_present']}"
-            )
-        if publication_report["conflicted"]:
-            print(
-                "[worker] candidate publications quarantined "
-                f"conflicted={publication_report['conflicted']}"
-            )
+        # A transient outbox/JSONL failure must not terminate the worker loop.
+        # The durable SQLite outbox remains pending and is retried on the next poll.
+        try:
+            publication_report = candidate_store.reconcile_pending_publications()
+        except Exception as exc:
+            print(f"[worker] candidate publication reconciliation failed: {exc}")
+        else:
+            if publication_report["published"]:
+                print(
+                    "[worker] candidate publications reconciled "
+                    f"recovered={publication_report['recovered']} "
+                    f"already_present={publication_report['already_present']}"
+                )
+            if publication_report["conflicted"]:
+                print(
+                    "[worker] candidate publications quarantined "
+                    f"conflicted={publication_report['conflicted']}"
+                )
         # C-4: reintento automático y acotado de distribuciones fallidas tras
         # aceptación. Un fallo del reconciliador nunca tumba el loop.
         now_mono = time.monotonic()
