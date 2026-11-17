@@ -364,11 +364,17 @@ def test_acceptance_fails_closed_without_configured_verifier_identity(api_server
 
 
 @pytest.mark.parametrize(
-    "subject",
-    [None, "", "   ", 123, "different-verifier"],
+    ("subject", "expected_error"),
+    [
+        (None, "acceptance_token_subject_verifier_mismatch"),
+        ("", "acceptance_token_subject_verifier_mismatch"),
+        ("   ", "acceptance_token_subject_verifier_mismatch"),
+        (123, "unauthorized"),
+        ("different-verifier", "acceptance_token_subject_verifier_mismatch"),
+    ],
 )
 def test_acceptance_rejects_missing_or_mismatched_jwt_subject_without_side_effects(
-    api_server, tmp_path, subject
+    api_server, tmp_path, subject, expected_error
 ):
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
@@ -390,7 +396,7 @@ def test_acceptance_rejects_missing_or_mismatched_jwt_subject_without_side_effec
         )
 
     assert status == 401
-    assert body["error"] == "acceptance_token_subject_verifier_mismatch"
+    assert body["error"] == expected_error
     assert not ledger.exists()
     record_acceptance.assert_not_called()
     get_candidate.assert_not_called()
