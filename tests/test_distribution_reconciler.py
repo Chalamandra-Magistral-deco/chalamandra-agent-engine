@@ -1,10 +1,4 @@
-"""C-4 (liberación): el worker reintenta automáticamente distribuciones fallidas.
-
-Antes, una distribución fallida tras aceptación solo se reintentaba a mano
-(replay del POST /v1/acceptance o /internal/v1/distributions). Ahora el
-reconciliador del worker la reintenta solo, con un intervalo mínimo entre
-intentos por resultado para no llenar el ledger de eventos fallidos.
-"""
+"""C-4: el reconciliador recupera aceptación operativa antes de distribuir."""
 import threading
 from unittest.mock import Mock
 
@@ -17,6 +11,7 @@ from api import (
     distribution_reconciler,
     distribution_store,
     subscription_store,
+    task_bus,
     worker_loop,
 )
 from api.crypto_signer import create_canonical_payload
@@ -69,11 +64,17 @@ def _accept_candidate(monkeypatch, candidate_id="cand-reconcile-1"):
         "decided_at": "2026-11-14T07:00:00+00:00",
         "trace_id": TRACE_ID,
     }
-    signature = VERIFIER_KEY.sign(
+    decision["signature"] = VERIFIER_KEY.sign(
         create_canonical_payload(decision)
     ).signature.hex()
-    decision["signature"] = signature
     acceptance_store.record_acceptance(decision)
+    # Existing tests focus on dispatch retry mechanics; model a TaskBus state
+    # already synchronized by the acceptance endpoint.
+    monkeypatch.setattr(
+        task_bus,
+        "get_result_task_statuses",
+        lambda _result_id: [{"task_id": "test-task", "status": "accepted"}],
+    )
     return candidate_id
 
 
@@ -101,15 +102,12 @@ def _patch_working_subscription(monkeypatch):
 def test_failed_distribution_is_retried_and_delivered(monkeypatch, verifier_env):
     candidate_id = _accept_candidate(monkeypatch)
     _patch_no_subscriptions(monkeypatch)
-
-    # La aceptación sin suscriptores deja un evento fallido.
     sent = webhook_dispatcher.dispatch_event(
         "result.accepted", candidate_id, TRACE_ID, event_id="acceptance:dec-reconcile-1"
     )
     assert sent == 0
     assert distribution_store.latest_dispatch(candidate_id)["status"] == "failed"
 
-    # Aparece un suscriptor que funciona: la reconciliación lo entrega.
     _patch_working_subscription(monkeypatch)
     report = distribution_reconciler.reconcile_failed_distributions(
         min_interval_seconds=0
@@ -121,21 +119,68 @@ def test_failed_distribution_is_retried_and_delivered(monkeypatch, verifier_env)
         "still_failed": 0,
         "skipped_throttled": 0,
         "skipped_invalid": 0,
+        "skipped_operational_sync": 0,
     }
     assert webhook_dispatcher.post_json.call_count == 1
     assert distribution_store.latest_dispatch(candidate_id)["status"] == "dispatched"
 
 
+def test_reconciler_repairs_acceptance_task_state_before_dispatch(monkeypatch, verifier_env):
+    candidate_id = _accept_candidate(monkeypatch)
+    states = iter([
+        [{"task_id": "test-task", "status": "candidate"}],
+        [{"task_id": "test-task", "status": "accepted"}],
+    ])
+    monkeypatch.setattr(
+        task_bus, "get_result_task_statuses", lambda _result_id: next(states)
+    )
+    mark_accepted = Mock(return_value=1)
+    monkeypatch.setattr(task_bus, "mark_result_accepted", mark_accepted)
+    dispatch = Mock(return_value=1)
+    monkeypatch.setattr(webhook_dispatcher, "dispatch_event", dispatch)
+
+    report = distribution_reconciler.reconcile_failed_distributions(
+        min_interval_seconds=0
+    )
+
+    mark_accepted.assert_called_once_with(candidate_id)
+    dispatch.assert_called_once_with(
+        event_type="result.accepted",
+        result_id=candidate_id,
+        trace_id=TRACE_ID,
+        event_id="acceptance:dec-reconcile-1",
+    )
+    assert report["delivered"] == 1
+    assert report["skipped_operational_sync"] == 0
+
+
+def test_reconciler_fails_closed_when_task_state_cannot_be_synchronized(monkeypatch, verifier_env):
+    candidate_id = _accept_candidate(monkeypatch)
+    monkeypatch.setattr(
+        task_bus,
+        "get_result_task_statuses",
+        lambda _result_id: [{"task_id": "test-task", "status": "blocked"}],
+    )
+    dispatch = Mock(return_value=1)
+    monkeypatch.setattr(webhook_dispatcher, "dispatch_event", dispatch)
+
+    report = distribution_reconciler.reconcile_failed_distributions(
+        min_interval_seconds=0
+    )
+
+    dispatch.assert_not_called()
+    assert report["skipped_operational_sync"] == 1
+    assert report["retried"] == 0
+
+
 def test_dispatched_result_is_not_retried(monkeypatch, verifier_env):
     candidate_id = _accept_candidate(monkeypatch)
     _patch_working_subscription(monkeypatch)
-
     sent = webhook_dispatcher.dispatch_event(
         "result.accepted", candidate_id, TRACE_ID, event_id="acceptance:dec-reconcile-1"
     )
     assert sent == 1
     calls = webhook_dispatcher.post_json.call_count
-
     report = distribution_reconciler.reconcile_failed_distributions(
         min_interval_seconds=0
     )
@@ -150,15 +195,11 @@ def test_retry_is_throttled_by_interval(monkeypatch, verifier_env):
     webhook_dispatcher.dispatch_event(
         "result.accepted", candidate_id, TRACE_ID, event_id="acceptance:dec-reconcile-1"
     )
-
-    # El último intento fallido es reciente: no se reintenta todavía.
     report = distribution_reconciler.reconcile_failed_distributions(
         min_interval_seconds=300
     )
     assert report["retried"] == 0
     assert report["skipped_throttled"] == 1
-
-    # Con intervalo 0 sí se reintenta (y vuelve a fallar sin suscriptores).
     report = distribution_reconciler.reconcile_failed_distributions(
         min_interval_seconds=0
     )
@@ -192,7 +233,6 @@ def test_rejected_decision_is_not_reconciled(monkeypatch, verifier_env):
         create_canonical_payload(decision)
     ).signature.hex()
     acceptance_store.record_acceptance(decision)
-
     report = distribution_reconciler.reconcile_failed_distributions(
         min_interval_seconds=0
     )
@@ -201,7 +241,6 @@ def test_rejected_decision_is_not_reconciled(monkeypatch, verifier_env):
 
 
 def test_worker_loop_runs_reconciliation(monkeypatch):
-    """El loop del worker invoca al reconciliador sin tumbarse si falla."""
     calls = []
     monkeypatch.setattr(
         distribution_reconciler,
@@ -209,6 +248,7 @@ def test_worker_loop_runs_reconciliation(monkeypatch):
         lambda: calls.append(1) or {
             "examined": 0, "retried": 0, "delivered": 0,
             "still_failed": 0, "skipped_throttled": 0, "skipped_invalid": 0,
+            "skipped_operational_sync": 0,
         },
     )
     monkeypatch.setenv("CHALAMANDRA_WORKER_POLL_INTERVAL", "0.05")
