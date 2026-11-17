@@ -30,7 +30,7 @@ def make_jwt(scopes="jobs:write jobs:read results:read acceptance:write", subjec
     import time
 
     payload = {"scope": scopes, "exp": int(time.time()) + 3600}
-    if subject:
+    if subject is not None:
         payload["sub"] = subject
     return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
@@ -167,12 +167,12 @@ def test_acceptance_token_sub_mismatching_verifier_is_rejected(
     assert body["error"] == "acceptance_token_subject_verifier_mismatch"
 
 
-def test_acceptance_token_without_sub_still_accepted(
+def test_acceptance_token_without_sub_is_rejected(
     api_server, tmp_path
 ):
-    # Compatibilidad con emisores existentes que no fijan `sub`.
     status, body = _post_acceptance(
         api_server, tmp_path, _signed_payload(), make_jwt()
     )
-    assert status == 201
-    assert body["outcome"] == "accepted"
+    assert status == 401
+    assert body["error"] == "acceptance_token_subject_verifier_mismatch"
+    assert not (tmp_path / "acceptance_store.jsonl").exists()
