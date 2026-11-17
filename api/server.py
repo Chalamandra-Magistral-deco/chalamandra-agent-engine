@@ -779,19 +779,16 @@ class EngineRequestHandler(BaseHTTPRequestHandler):
             if not body or "candidate_id" not in body or "outcome" not in body:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
                 return
-            # C-7: el JWT de aceptación liga `sub` con `verifier_id` cuando
-            # el token declara `sub`. Un token sin `sub` se acepta como
-            # antes (emisores existentes que no lo fijan); un token con
-            # `sub` distinto del verificador que firma la decisión se
-            # rechaza: la separación ya no depende solo del secreto de la
-            # semilla. Requisito del emisor: los tokens de aceptación
-            # deben emitirse con sub=<verifier_id> (ver
-            # verifier/submit_acceptance.py).
+            # C-7: el JWT debe identificar obligatoriamente al mismo
+            # verificador que firma la decisión; tokens sin sub no se aceptan.
             token_subject = token_payload.get("sub")
+            verifier_id = body.get("verifier_id")
             if (
-                isinstance(token_subject, str)
-                and token_subject.strip()
-                and token_subject != body.get("verifier_id")
+                not isinstance(token_subject, str)
+                or not token_subject.strip()
+                or not isinstance(verifier_id, str)
+                or not verifier_id.strip()
+                or token_subject != verifier_id
             ):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {
                     "error": "acceptance_token_subject_verifier_mismatch",
