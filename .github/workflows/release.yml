@@ -47,6 +47,7 @@ jobs:
       - name: Run every test (fail closed)
         env:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
+          CATEDRALX_HORMONAS_HMAC_KEY: "ci-only-catedralx-hormones-hmac-key-2026"
         run: python -m pytest -q --ignore=CatedralX --junitxml=junit-agents.xml
 
       - name: Ruff lint gate
