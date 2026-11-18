@@ -49,7 +49,7 @@ Task 2 (6ba41ddf):
 5. Verifier firma la decisión con Ed25519.
 6. API persiste y distribuye.
 
-Ver docs/INTEGRACION_GOBERNANCE.md para el contrato vigente.
+Ver README.md y api/task_contracts.py para el contrato vigente.
 
 ## Referencias
 
