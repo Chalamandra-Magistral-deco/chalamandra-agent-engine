@@ -157,7 +157,10 @@ def test_explicit_prices_return_signal_without_order_execution(
         trace_id="1234567890abcdef1234567890abcdef",
     )
 
-    assert result["status"] == "ok"
+    assert result["status"] == "ok"  # compatibilidad: estado del análisis
+    assert result["analysis_status"] == "ok"
+    assert result["governance_status"] == "ACCEPTED"
+    assert result["governance_accepted"] is True
     assert result["engine"] == "CatedralX"
     assert result["asset"] == "EUR/USD"
     assert result["decision"] == "HOLD"
@@ -249,6 +252,46 @@ def test_frankfurter_daily_source_runs_catedralx_in_analysis_only_mode(
     assert result["signal_consistent"] is True
     assert result["trading_eligible"] is False
     assert not state_path.exists()
+
+
+def test_successful_analysis_does_not_imply_governance_acceptance_when_gate_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bridge, "_ENGINE_MODULE", None)
+    monkeypatch.setattr(bridge, "_ENGINE_ROOT", None)
+    monkeypatch.setattr(bridge, "_ENGINE_STATE_PATH", None)
+    monkeypatch.setattr(bridge, "_resolve_root", lambda: tmp_path / "CatedralX")
+    monkeypatch.setattr(
+        bridge,
+        "_resolve_state_path",
+        lambda: tmp_path / "state" / "hormonas.json",
+    )
+    captured: dict = {}
+    fake = _fake_module(captured)
+    original_think = fake.think
+
+    def blocked_think(sensory_input, historial_precios, ciclo_id):
+        state = original_think(sensory_input, historial_precios, ciclo_id)
+        state.cognicion["cathedral_verdict"]["status"] = "BLOCKED_UNCERTAINTY"
+        return state
+
+    fake.think = blocked_think
+    monkeypatch.setattr(bridge, "_load_catedralx_module", lambda _: fake)
+
+    result = bridge.catedralx_reasoning_tool(
+        historical_prices=[100.0 + index for index in range(30)],
+        trace_id="1234567890abcdef1234567890abcdef",
+    )
+
+    assert result["status"] == "ok"
+    assert result["analysis_status"] == "ok"
+    assert result["governance_status"] == "BLOCKED_UNCERTAINTY"
+    assert result["governance_accepted"] is False
+    assert result["evaluation_gate"] == "BLOCKED_UNCERTAINTY"
+    assert result["trading_eligible"] is False
+    assert result["orders_created"] is False
+    assert result["orders_executed"] is False
 
 
 def test_conflicting_catedralx_signal_requires_review(
