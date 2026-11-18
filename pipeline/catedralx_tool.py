@@ -436,8 +436,19 @@ def catedralx_reasoning_tool(
                 "El motor emitió una decisión direccional sin un régimen definido."
             )
         analysis_status = "review_required" if consistency_warnings else "ok"
+        raw_governance_status = central_verdict.get("status")
+        governance_status = (
+            raw_governance_status.strip().upper()
+            if isinstance(raw_governance_status, str) and raw_governance_status.strip()
+            else "NOT_EVALUATED"
+        )
         return {
+            # Backward-compatible status describes analysis quality only.
+            # It must never be interpreted as governance acceptance.
             "status": analysis_status,
+            "analysis_status": analysis_status,
+            "governance_status": governance_status,
+            "governance_accepted": governance_status == "ACCEPTED",
             "engine": "CatedralX",
             "asset": str(asset).strip() or "unspecified",
             "timestamp": getattr(state, "timestamp", None),
