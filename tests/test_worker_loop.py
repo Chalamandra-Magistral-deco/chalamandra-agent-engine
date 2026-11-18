@@ -985,6 +985,7 @@ def _real_central_decision_result(monkeypatch, tmp_path):
         "CATEDRALX_SNAPSHOT_PATH": str(snap_path),
         # La misma clave con la que se firmó: el ciclo la necesita para verificar.
         "CATEDRALX_SNAPSHOT_SIGNING_SECRET": "central-verify-test-key-32-bytes!!",
+        "CATEDRALX_HORMONAS_HMAC_KEY": "central-test-hormones-hmac-key-32-bytes",
         "CATEDRALX_STATE_PATH": str(state_dir / "hormonas.json"),
         "CATEDRALX_RESULT_STORE_PATH": str(state_dir / "results.jsonl"),
         "CATEDRALX_FEEDBACK_PATH": str(state_dir / "feedback.jsonl"),
