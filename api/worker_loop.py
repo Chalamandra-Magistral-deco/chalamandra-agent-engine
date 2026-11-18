@@ -250,6 +250,7 @@ def _run_catedralx(payload: dict) -> dict:
     _ALLOWED = (
         "CATEDRALX_PATH",
         "CATEDRALX_STATE_PATH",
+        "CATEDRALX_HORMONAS_HMAC_KEY",
         "CATEDRALX_RESULT_STORE_PATH",
         "CATEDRALX_SNAPSHOT_PATH",
         "CATEDRALX_FEEDBACK_PATH",
