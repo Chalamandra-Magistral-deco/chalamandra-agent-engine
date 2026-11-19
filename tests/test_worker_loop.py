@@ -1029,7 +1029,7 @@ def _real_central_decision_result(monkeypatch, tmp_path):
     assert completed.returncode == 0, completed.stderr
     parsed = json.loads(completed.stdout)
     assert isinstance(parsed.get("decision_result"), dict)
-    return parsed["decision_result"]
+    return _seal_decision_result(parsed["decision_result"])
 
 
 def test_verify_evaluation_hash_via_cli_opportunity(monkeypatch, tmp_path):
