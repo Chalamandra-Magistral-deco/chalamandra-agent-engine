@@ -20,9 +20,10 @@ def _record():
         "risks": [],
         "provenance": [],
     }
-    canonical = lambda value: json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
+    def canonical(value):
+        return json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
     record["contract_hash"] = hashlib.sha256(canonical(record)).hexdigest()
     chain = {
         "sequence": 1,
