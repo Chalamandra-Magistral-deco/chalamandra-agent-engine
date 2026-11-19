@@ -1127,8 +1127,8 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
                 )
             output = {"status": "ANALYSIS_COMPLETE", "decision_result": candidate}
             if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
-            output["decision_result"] = _seal_decision_result(output["decision_result"])
-        return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
+                output["decision_result"] = _seal_decision_result(output["decision_result"])
+            return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
         return fake_run_candidate
 
     monkeypatch.setattr(
