@@ -16,6 +16,7 @@ from api import task_bus
 from api import candidate_store
 from api import distribution_reconciler
 from api import catedralx_feedback
+from api.decision_result_integrity import verify_decision_result_integrity
 from api.task_contracts import (
     CATEDRALX_ECONOMIC_EVALUATION,
     CATEDRALX_OPPORTUNITY_EVALUATION,
@@ -312,6 +313,7 @@ def _run_catedralx(payload: dict) -> dict:
         required = {
             "result_id", "status", "engine", "decision", "evidence", "assumptions",
             "risks", "provenance", "trace_id", "evaluation_hash", "evaluation_gate", "analysis_only",
+            "contract_hash", "store_integrity",
             "orders_created", "orders_executed",
         }
         if not required.issubset(decision):
@@ -344,6 +346,13 @@ def _run_catedralx(payload: dict) -> dict:
                 "reason": "catedralx_nonzero_exit",
                 "return_code": result.returncode,
             }
+        # Independently recompute the full DecisionResult hash and its
+        # ResultStore chain-node commitment; the evaluation hash alone is not
+        # a substitute for whole-contract integrity.
+        integrity_valid, integrity_reason = verify_decision_result_integrity(decision)
+        if not integrity_valid:
+            return {"status": "BLOCKED", "reason": integrity_reason}
+
         # C-2: la evaluación cruda es obligatoria. No aceptar resultados
         # antiguos que solo proporcionen un hash con formato válido.
         evaluation = decision.get("evaluation")
