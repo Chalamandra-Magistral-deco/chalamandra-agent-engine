@@ -15,9 +15,10 @@ def _seal_decision_result(record):
         key: value for key, value in record.items()
         if key not in {"contract_hash", "store_integrity"}
     }
-    canonical = lambda value: json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
+    def canonical(value):
+        return json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
     record["contract_hash"] = hashlib.sha256(canonical(payload)).hexdigest()
     chain = {
         "sequence": 1,
