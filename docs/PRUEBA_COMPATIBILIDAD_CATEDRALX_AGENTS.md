@@ -123,3 +123,22 @@ Cambios nuevos en CatedralX `work`:
 El workflow de Agents `work` se actualizó en el commit `1b72adad2a480d9d3a1aa1062538b49180a5ddc4` para fijar CatedralX en `41aaa38b96e7c230aa54921a1ee2c8e9c8494e58` e incluir una ejecución independiente de `CatedralX/tests/test_decision_result.py`, con instalación de `CatedralX[test]` y artefacto JUnit propio. Esto separa el conteo de Agents (404) del conteo de pruebas ResultStore de CatedralX.
 
 **Pendiente de evidencia:** la edición del workflow no acredita por sí sola que el nuevo run haya comenzado o terminado. Se debe comprobar el run generado, revisar ambos XML y verificar que la suite CatedralX no quede omitida. No afirmar aprobación hasta contar con esos resultados.
+
+## 11. Hallazgo de CI y frontera de integridad (2026-11-23)
+
+El primer run que incorporó la suite ResultStore fue `45188737066` (commit Agents `6fccdd83ad1b48fde8b228dd52ccc476ef7fb566`).
+- Suite Agents: terminó con éxito.
+- Suite CatedralX `tests/test_decision_result.py`: 36 tests, 1 fallo, 0 errores, 0 omitidos.
+- Fallo único: `test_result_store_concurrent_appends_keep_all_lines_valid` esperaba `result_id` en la raíz de cada línea JSONL. El nuevo esquema guarda cada resultado dentro de `record` y sus metadatos en `store_integrity`; la aserción del test no se había actualizado al envelope.
+- Corrección publicada en CatedralX `work`: commit `7d733bdbd4f1634ae099ab8e962dfce9cac0cf0b`; la aserción concurrente ahora lee `record.result_id`.
+- Agents `work` actualizó el pin y disparó run `45189122258` con SHA CatedralX `7d733bdbd4f1634ae099ab8e962dfce9cac0cf0b`. Al momento de esta anotación el run seguía en ejecución; no se atribuye aprobación.
+
+### Contrato `evaluation_hash` vs `store_integrity`
+
+- Agents vuelve a calcular `evaluation_hash` del objeto de evaluación mediante `BIN/catedral verify-evaluation-hash`; esto valida el contenido de evaluación.
+- CatedralX ResultStore añade `store_integrity` en el envelope JSONL: `sequence`, `previous_record_hash`, `kind`, `result_id`, `content_hash` y `record_hash`, más checkpoint lateral local `.head`.
+- La inspección de `api/worker_loop.py` no encontró una llamada que recupere/verifique el envelope del ResultStore ni compare `content_hash`/`record_hash`. El worker recibe `decision_result` como objeto JSON y verifica `evaluation_hash`; no se ha demostrado que verifique la cadena de persistencia.
+- Por tanto, **la integridad de almacenamiento no está integrada todavía en el contrato de Membrana API**. No presentar `evaluation_hash` como sustituto de `store_integrity`.
+- Próxima implementación propuesta: exponer en el CLI canónico una verificación por `result_id` que llame a `get_result` (verificación integral del JSONL y checkpoint) y compare el registro persistido con el objeto entregado al worker; Agents invocará ese CLI en subproceso con resultado fail-closed. Pruebas cruzadas deberán cubrir registro ausente, objeto distinto, registro alterado, checkpoint divergente y legacy no migrado.
+
+**Límite:** no se implementó aún esa integración. No se cambió `main`, no se fusionó ni desplegó.
