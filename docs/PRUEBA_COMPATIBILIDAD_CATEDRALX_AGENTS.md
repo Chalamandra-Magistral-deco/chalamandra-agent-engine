@@ -74,6 +74,7 @@ Ejecución GitHub Actions `45182038530`:
 - CatedralX checkout verificado: `e26e4a46ad00bcc59de5347176f7c52948f05391`.
 - Conclusión: `success`; jobs `unit-tests`, `Scan all Git history with Gitleaks` y `Dependency audit and SBOM` terminaron correctamente.
 - En `unit-tests` constan como aprobados checkout de CatedralX, verificación SHA, instalación, pytest, subida del artefacto, Ruff y mypy.
+- En el SHA fijado de CatedralX se verificó que existen `BIN/catedral` (blob `47ccaba7…`), `elite/FEX/GOVERNANCE/economic_cycle.py` (`408a8b69…`) y `elite/bin/dispatch_agents.py` (`f371118b…`); por tanto, los guardas de omisión de los dos tests de integración no se activan por ausencia de esos archivos. El workflow exporta `CATEDRALX_PATH` al checkout fijado.
 - GitHub registra `agents-catedralx-test-evidence` (8,269 bytes, no expirado) y `sbom-cyclonedx` (2,702 bytes, no expirado).
 
 **Límite de lectura de evidencia:** la API de GitHub confirma la existencia del artefacto, y el workflow declara la ruta `agents-catedralx-tests.xml`; en esta revisión no se extrajo/leyó el XML contenido en el ZIP. Por tanto, no se publica un conteo de tests ni se afirma el contenido interno del ZIP. La conclusión CI success acredita que el comando `pytest` terminó con código cero en ese commit, pero no sustituye el examen del XML ni una ejecución E2E productiva.
