@@ -7,7 +7,7 @@
 
 | Componente | Repositorio | Ref fijada |
 |---|---|---|
-| CatedralX | `Chalamandra-Magistral-deco/CatedralX` | `e26e4a46ad00bcc59de5347176f7c52948f05391` (rama work al preparar el flujo; snapshot de código base derivado de main `62c0214d63f24cc1f5d3670e703baa70c64f2315`) |
+| CatedralX | `Chalamandra-Magistral-deco/CatedralX` | `41aaa38b96e7c230aa54921a1ee2c8e9c8494e58` (rama work al preparar el flujo; snapshot de código base derivado de main `62c0214d63f24cc1f5d3670e703baa70c64f2315`) |
 | Agents | `Chalamandra-Magistral-deco/chalamandra-agent-engine` | commit del workflow que ejecuta esta prueba; checkout de la rama `work` |
 
 La referencia de CatedralX se fija por SHA completo, no por nombre de rama, para que una ejecución futura no cambie silenciosamente de código.
@@ -21,7 +21,8 @@ El workflow `.github/workflows/engine-tests.yml` en `work`:
 4. Instala dependencias Python 3.12.
 5. Ejecuta la suite de Agents, incluidos los tests cross-repo disponibles, con `CATEDRALX_PATH` apuntando al checkout fijado.
 6. Publica `agents-catedralx-tests.xml` como artefacto de evidencia, incluso si los tests fallan.
-7. Ejecuta lint, mypy, escaneo de secretos e inventario SBOM conforme al workflow existente.
+7. Instala las dependencias de test de CatedralX y ejecuta `CatedralX/tests/test_decision_result.py` por separado, publicando `catedralx-result-store-tests.xml`.
+8. Ejecuta lint, mypy, escaneo de secretos e inventario SBOM conforme al workflow existente.
 
 Comando reproducible local (en un entorno que tenga ambos repositorios y dependencias):
 ```bash
@@ -71,7 +72,7 @@ Un test fallido, omitido, o sin artefacto no cuenta como aprobación. Un test si
 Ejecución GitHub Actions `45182038530`:
 - URL: https://github.com/Chalamandra-Magistral-deco/chalamandra-agent-engine/actions/runs/45182038530
 - Agents `work` SHA: `30fb6268151fd0b7395f4371047516596ef8a254`.
-- CatedralX checkout verificado: `e26e4a46ad00bcc59de5347176f7c52948f05391`.
+- CatedralX checkout verificado: `41aaa38b96e7c230aa54921a1ee2c8e9c8494e58`.
 - Conclusión: `success`; jobs `unit-tests`, `Scan all Git history with Gitleaks` y `Dependency audit and SBOM` terminaron correctamente.
 - En `unit-tests` constan como aprobados checkout de CatedralX, verificación SHA, instalación, pytest, subida del artefacto, Ruff y mypy.
 - En el SHA fijado de CatedralX se verificó que existen `BIN/catedral` (blob `47ccaba7…`), `elite/FEX/GOVERNANCE/economic_cycle.py` (`408a8b69…`) y `elite/bin/dispatch_agents.py` (`f371118b…`); por tanto, los guardas de omisión de los dos tests de integración no se activan por ausencia de esos archivos. El workflow exporta `CATEDRALX_PATH` al checkout fijado.
@@ -116,3 +117,9 @@ Cambios nuevos en CatedralX `work`:
 **Estado de estos cambios:** commits publicados en `work`; la ejecución CI posterior a estos commits todavía no está acreditada en este documento. No declarar las pruebas nuevas aprobadas hasta leer el run correspondiente. No se modificó `main`, no se fusionó ni desplegó.
 
 **Diseño pendiente:** si se requiere resistencia a un actor con control del almacenamiento local, anclar periódicamente `(sequence, head_hash)` mediante firma Ed25519 y persistirlo fuera del límite de confianza del host/volumen. La aceptación del ancla debe ser fail-closed; un almacén externo vacío o no disponible debe producir estado `cannot_verify`, no éxito.
+
+## 10. Ejecución de pruebas propias de CatedralX en CI
+
+El workflow de Agents `work` se actualizó en el commit `1b72adad2a480d9d3a1aa1062538b49180a5ddc4` para fijar CatedralX en `41aaa38b96e7c230aa54921a1ee2c8e9c8494e58` e incluir una ejecución independiente de `CatedralX/tests/test_decision_result.py`, con instalación de `CatedralX[test]` y artefacto JUnit propio. Esto separa el conteo de Agents (404) del conteo de pruebas ResultStore de CatedralX.
+
+**Pendiente de evidencia:** la edición del workflow no acredita por sí sola que el nuevo run haya comenzado o terminado. Se debe comprobar el run generado, revisar ambos XML y verificar que la suite CatedralX no quede omitida. No afirmar aprobación hasta contar con esos resultados.
