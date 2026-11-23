@@ -22,10 +22,18 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: 6fa4d6a6ac8004edeb8ae37dbba7824e9258f289
+          ref: e26e4a46ad00bcc59de5347176f7c52948f05391
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
+
+      - name: Verify pinned CatedralX source
+        run: |
+          actual="$(git -C CatedralX rev-parse HEAD)"
+          test "$actual" = "e26e4a46ad00bcc59de5347176f7c52948f05391" || {
+            echo "Expected CatedralX e26e4a46ad00bcc59de5347176f7c52948f05391, got ${actual}" >&2
+            exit 1
+          }
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -44,7 +52,16 @@ jobs:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
           # Ephemeral test-only key; never used by production deployments.
           CATEDRALX_HORMONAS_HMAC_KEY: "ci-only-catedralx-hormones-hmac-key-2026"
-        run: python -m pytest -q --ignore=CatedralX
+        run: python -m pytest -q --ignore=CatedralX --junitxml=agents-catedralx-tests.xml
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agents-catedralx-test-evidence
+          path: agents-catedralx-tests.xml
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Lint
         run: python -m ruff check api adapters core dynamics pipeline registry telemetry tests
