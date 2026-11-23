@@ -142,3 +142,21 @@ El primer run que incorporó la suite ResultStore fue `45188737066` (commit Agen
 - Próxima implementación propuesta: exponer en el CLI canónico una verificación por `result_id` que llame a `get_result` (verificación integral del JSONL y checkpoint) y compare el registro persistido con el objeto entregado al worker; Agents invocará ese CLI en subproceso con resultado fail-closed. Pruebas cruzadas deberán cubrir registro ausente, objeto distinto, registro alterado, checkpoint divergente y legacy no migrado.
 
 **Límite:** no se implementó aún esa integración. No se cambió `main`, no se fusionó ni desplegó.
+
+## 12. Integración de verificación del envelope ResultStore (2026-11-23)
+
+Se implementó una primera integración explícita para `DecisionResult` central:
+- CatedralX `elite/contracts/result_store.py` expone `verify_result_record(result_id, expected_record, path)`. Bajo `LOCK_SH`, lee y verifica la cadena completa y el checkpoint local, localiza el ID y compara el hash de contenido del registro persistido con la copia recibida.
+- CatedralX CLI añade `verify-result-store --result-id <id> --expected-file <json>` mediante `BIN/catedral` y `elite/bin/verify_result_store.py`.
+- Agents `api/worker_loop.py` ejecuta ese CLI después de verificar `evaluation_hash`. Si falta el registro, hay corrupción, falla el checkpoint o el contenido no coincide, bloquea el resultado con `decision_result_store_integrity_verification_failed`.
+- Se añadieron pruebas de verificación positiva, copia alterada, registro ausente, CLI real y puente real worker→CLI. También se añadieron pruebas unitarias del comportamiento fail-closed.
+
+Commits relevantes:
+- CatedralX `verify_result_record`: `49321ab8abd2fe950364e734e63a28111a75d807` y corrección de comparación constante `0f38e3efe4a6dabe35adb34b5228ce1710190a68`.
+- CatedralX CLI: `f01f897f539c17c89fcb03d8a8cfa5d5ce3c76f1`, `d82f62977b799b5c76cb99ba648a8d217fcdf5bc`, `e57081ebb1ab0cd7ef0c46a76126d340342b187a`.
+- CatedralX pruebas: `0b45e659582beaae756c492f2047a2b84faf9a8a`, `591ff455d5f6269d1b80942962baf2eedc8090ef`.
+- Agents puente: `cdb98a82a1bcba884458ea481e5ce82a408ae949`; pruebas: `b59d02d3ff7c3c9b206ba524e984e772c1438612`, `40f684cf92ae74c5a4be741429f0335b00862f80`, `db998a84c0c13880b6e3750255cd7d00ce9aea56`, `f4effef8dcf3d29506f9fbe3a714b3d284f8f67e`, `7bbad7c655feee4a49c684726aafdf2381a10dce`.
+
+**Cobertura y límites:** esta primera integración aplica al `DecisionResult` de la ruta central que persiste en ResultStore. La ruta `EconomicOpportunityResult` sigue verificando `evaluation_hash`, pero no se ha demostrado que persista en este mismo ResultStore ni que use `store_integrity`; no extender la afirmación a ese contrato. El checkpoint continúa siendo lateral/local, no un ancla externa frente a un atacante que controle ambos archivos.
+
+**CI:** el run que incluye las pruebas reales de la nueva frontera es `45190419769`, commit Agents `7bbad7c655feee4a49c684726aafdf2381a10dce`, con CatedralX fijado en `591ff455d5f6269d1b80942962baf2eedc8090ef`. Al momento de esta actualización está en ejecución; todavía no se atribuye aprobación.
