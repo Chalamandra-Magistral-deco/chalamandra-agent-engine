@@ -1227,7 +1227,7 @@ def test_result_store_integrity_verifier_fails_closed(monkeypatch, tmp_path):
 def test_result_store_worker_bridge_executes_canonical_cli(monkeypatch, tmp_path):
     import sys
 
-    catedralx_root = Path(os.environ["CATEDRALX_PATH"]).resolve()
+    catedralx_root = Path(os.environ.get("CATEDRALX_PATH", Path(__file__).resolve().parents[2] / "CatedralX")).resolve()
     elite = str(catedralx_root / "elite")
     if elite not in sys.path:
         sys.path.insert(0, elite)
