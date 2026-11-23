@@ -77,7 +77,7 @@ Ejecución GitHub Actions `45182038530`:
 - En el SHA fijado de CatedralX se verificó que existen `BIN/catedral` (blob `47ccaba7…`), `elite/FEX/GOVERNANCE/economic_cycle.py` (`408a8b69…`) y `elite/bin/dispatch_agents.py` (`f371118b…`); por tanto, los guardas de omisión de los dos tests de integración no se activan por ausencia de esos archivos. El workflow exporta `CATEDRALX_PATH` al checkout fijado.
 - GitHub registra `agents-catedralx-test-evidence` (8,269 bytes, no expirado) y `sbom-cyclonedx` (2,702 bytes, no expirado).
 
-**Límite de lectura de evidencia:** la API de GitHub confirma la existencia del artefacto, y el workflow declara la ruta `agents-catedralx-tests.xml`; en esta revisión no se extrajo/leyó el XML contenido en el ZIP. Por tanto, no se publica un conteo de tests ni se afirma el contenido interno del ZIP. La conclusión CI success acredita que el comando `pytest` terminó con código cero en ese commit, pero no sustituye el examen del XML ni una ejecución E2E productiva.
+**Lectura posterior del artefacto:** se descargó el ZIP `agents-catedralx-test-evidence` (artifact ID `14821438302`, SHA-256 `e68faf7706d9cc72a7c18869408c0bd7d4a0a7d1b05e68c1eb8651f426f95e4c`) y se leyó `agents-catedralx-tests.xml`. El XML reporta `tests=404`, `failures=0`, `errors=0`, `skipped=0`, tiempo `53.932 s`, timestamp `2026-11-23T13:15:26.574765+00:00`; se encontraron 404 elementos testcase distribuidos en 56 clases. Esto corresponde a la suite de Agents ejecutada con `--ignore=CatedralX`, no a los tests propios de CatedralX. La conclusión CI success y el XML no sustituyen una ejecución E2E productiva.
 
 La inspección visual de TinyFish detectó la misma ejecución como exitosa y reportó los tres jobs sin fallos. Su lectura de la lista de artefactos fue inconsistente respecto al XML; para la existencia y tamaño de los artefactos prevalece el endpoint de artefactos de GitHub.
 
@@ -98,3 +98,21 @@ La inspección visual de TinyFish detectó la misma ejecución como exitosa y re
 - GitHub Actions: dependencias por SHA y jobs secuenciados, https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles y https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/using-jobs-in-a-workflow
 
 Estas referencias orientan la reproducibilidad y el diseño; no sustituyen evidencia de ejecución del repositorio.
+
+## 9. Seguimiento de integridad ResultStore (2026-11-23)
+
+Se descargó y examinó el artefacto JUnit del run `45182038530`: 404 tests de Agents, 0 fallos, 0 errores, 0 omitidos. El XML no incluye la suite propia de CatedralX porque el workflow usa `--ignore=CatedralX`.
+
+La revisión de código detectó una distinción de confianza que debe quedar explícita:
+- CatedralX `elite/contracts/result_store.py` mantiene un hash-chain y un archivo lateral `.head`.
+- El propio código declara que el sidecar no es un ancla criptográfica externa: quien pueda reescribir ambos archivos puede recalcularlos.
+- Por tanto, el sidecar detecta truncamiento/escritura incompleta respecto al estado local conservado, pero no constituye por sí solo una prueba contra un actor que controle ambos archivos.
+- La implementación de Agents inspeccionada valida `DecisionResult/evaluation_hash` mediante el CLI canónico; no se ha demostrado que lea/verifique los metadatos internos `store_integrity`.
+
+Cambios nuevos en CatedralX `work`:
+- `elite/contracts/result_store.py`: commit `411469e4af7b1f813765f7e97d3bd5edebfa6fb7`; se corrigió la descripción del checkpoint para llamarlo lateral/local, evitando atribuirle confianza externa.
+- `tests/test_decision_result.py`: commit `2830502323d6f12610aa8ec6abef9cd470ce6d68`; añade pruebas negativas de modificación de un registro y reescritura del checkpoint. La suite ya tenía pruebas de truncamiento de sufijo, historial legacy y duplicación de IDs.
+
+**Estado de estos cambios:** commits publicados en `work`; la ejecución CI posterior a estos commits todavía no está acreditada en este documento. No declarar las pruebas nuevas aprobadas hasta leer el run correspondiente. No se modificó `main`, no se fusionó ni desplegó.
+
+**Diseño pendiente:** si se requiere resistencia a un actor con control del almacenamiento local, anclar periódicamente `(sequence, head_hash)` mediante firma Ed25519 y persistirlo fuera del límite de confianza del host/volumen. La aceptación del ancla debe ser fail-closed; un almacén externo vacío o no disponible debe producir estado `cannot_verify`, no éxito.
