@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: e26e4a46ad00bcc59de5347176f7c52948f05391
+          ref: 41aaa38b96e7c230aa54921a1ee2c8e9c8494e58
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -30,8 +30,8 @@ jobs:
       - name: Verify pinned CatedralX source
         run: |
           actual="$(git -C CatedralX rev-parse HEAD)"
-          test "$actual" = "e26e4a46ad00bcc59de5347176f7c52948f05391" || {
-            echo "Expected CatedralX e26e4a46ad00bcc59de5347176f7c52948f05391, got ${actual}" >&2
+          test "$actual" = "41aaa38b96e7c230aa54921a1ee2c8e9c8494e58" || {
+            echo "Expected CatedralX 41aaa38b96e7c230aa54921a1ee2c8e9c8494e58, got ${actual}" >&2
             exit 1
           }
 
@@ -53,6 +53,23 @@ jobs:
           # Ephemeral test-only key; never used by production deployments.
           CATEDRALX_HORMONAS_HMAC_KEY: "ci-only-catedralx-hormones-hmac-key-2026"
         run: python -m pytest -q --ignore=CatedralX --junitxml=agents-catedralx-tests.xml
+
+      - name: Install CatedralX test dependencies
+        run: python -m pip install -e "CatedralX[test]"
+
+      - name: Run CatedralX ResultStore contract tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/CatedralX/elite
+        run: python -m pytest -q CatedralX/tests/test_decision_result.py --junitxml=catedralx-result-store-tests.xml
+
+      - name: Upload CatedralX ResultStore test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: catedralx-result-store-test-evidence
+          path: catedralx-result-store-tests.xml
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Upload test evidence
         if: always()
