@@ -1173,3 +1173,53 @@ def test_worker_loop_reconciles_verified_feedback_into_catedralx(monkeypatch):
     worker_loop._run_worker_loop(StopAfterOneWait())
 
     feedback.assert_called_once_with()
+
+def test_result_store_integrity_verifier_binds_worker_copy(monkeypatch, tmp_path):
+    import subprocess
+
+    canonical = {
+        "result_id": "0123456789abcdef0123456789abcdef",
+        "engine": "CatedralX",
+        "decision": "hold",
+        "evaluation_hash": "a" * 64,
+    }
+    monkeypatch.setenv("CATEDRALX_PATH", str(tmp_path / "CatedralX"))
+    captured = {}
+
+    def fake_run(args, *, cwd, env, capture_output, text, timeout, check):
+        expected_path = Path(args[args.index("--expected-file") + 1])
+        captured["expected"] = json.loads(expected_path.read_text(encoding="utf-8"))
+        captured["args"] = args
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout=json.dumps({
+                "valid": True,
+                "result_id": canonical["result_id"],
+                "record_hash": "b" * 64,
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert worker_loop._verify_result_store_record_via_cli(canonical) is None
+    assert captured["expected"] == canonical
+    assert captured["args"][2] == "verify-result-store"
+
+
+def test_result_store_integrity_verifier_fails_closed(monkeypatch, tmp_path):
+    import subprocess
+
+    canonical = {
+        "result_id": "0123456789abcdef0123456789abcdef",
+        "engine": "CatedralX",
+    }
+    monkeypatch.setenv("CATEDRALX_PATH", str(tmp_path / "CatedralX"))
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout='{"valid":false}', stderr="checkpoint mismatch"
+        ),
+    )
+    assert worker_loop._verify_result_store_record_via_cli(canonical) == (
+        "decision_result_store_integrity_verification_failed"
+    )
