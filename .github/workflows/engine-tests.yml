@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Chalamandra-Magistral-deco/CatedralX
-          ref: 7d733bdbd4f1634ae099ab8e962dfce9cac0cf0b
+          ref: 591ff455d5f6269d1b80942962baf2eedc8090ef
           path: CatedralX
           token: ${{ secrets.CATEDRALX_READ_TOKEN }}
           persist-credentials: false
@@ -30,8 +30,8 @@ jobs:
       - name: Verify pinned CatedralX source
         run: |
           actual="$(git -C CatedralX rev-parse HEAD)"
-          test "$actual" = "7d733bdbd4f1634ae099ab8e962dfce9cac0cf0b" || {
-            echo "Expected CatedralX 7d733bdbd4f1634ae099ab8e962dfce9cac0cf0b, got ${actual}" >&2
+          test "$actual" = "591ff455d5f6269d1b80942962baf2eedc8090ef" || {
+            echo "Expected CatedralX 591ff455d5f6269d1b80942962baf2eedc8090ef, got ${actual}" >&2
             exit 1
           }
 
