@@ -1,6 +1,6 @@
 # Prueba reproducible de compatibilidad CatedralX ↔ Agents
 
-**Estado:** preparada en `work`; ejecución CI pendiente de resultado observable.  
+**Estado:** CI aprobada en `work` para la combinación de SHAs indicada abajo; evidencia de runtime productivo no establecida.  
 **Sin despliegue:** este flujo instala dependencias, ejecuta pruebas aisladas y publica evidencia de test; no despliega ni invoca servicios productivos.
 
 ## 1. Fuentes exactas
@@ -66,7 +66,21 @@ La prueba solo se considera aprobada si:
 
 Un test fallido, omitido, o sin artefacto no cuenta como aprobación. Un test sintético aprobado no demuestra runtime productivo.
 
-## 6. Bloqueos y límites conocidos
+## 6. Evidencia de CI observada
+
+Ejecución GitHub Actions `45182038530`:
+- URL: https://github.com/Chalamandra-Magistral-deco/chalamandra-agent-engine/actions/runs/45182038530
+- Agents `work` SHA: `30fb6268151fd0b7395f4371047516596ef8a254`.
+- CatedralX checkout verificado: `e26e4a46ad00bcc59de5347176f7c52948f05391`.
+- Conclusión: `success`; jobs `unit-tests`, `Scan all Git history with Gitleaks` y `Dependency audit and SBOM` terminaron correctamente.
+- En `unit-tests` constan como aprobados checkout de CatedralX, verificación SHA, instalación, pytest, subida del artefacto, Ruff y mypy.
+- GitHub registra `agents-catedralx-test-evidence` (8,269 bytes, no expirado) y `sbom-cyclonedx` (2,702 bytes, no expirado).
+
+**Límite de lectura de evidencia:** la API de GitHub confirma la existencia del artefacto, y el workflow declara la ruta `agents-catedralx-tests.xml`; en esta revisión no se extrajo/leyó el XML contenido en el ZIP. Por tanto, no se publica un conteo de tests ni se afirma el contenido interno del ZIP. La conclusión CI success acredita que el comando `pytest` terminó con código cero en ese commit, pero no sustituye el examen del XML ni una ejecución E2E productiva.
+
+La inspección visual de TinyFish detectó la misma ejecución como exitosa y reportó los tres jobs sin fallos. Su lectura de la lista de artefactos fue inconsistente respecto al XML; para la existencia y tamaño de los artefactos prevalece el endpoint de artefactos de GitHub.
+
+## 7. Bloqueos y límites conocidos
 
 - El workflow necesita el secreto de solo lectura `CATEDRALX_READ_TOKEN`; no se inspecciona ni modifica el secreto. Si falta o no tiene acceso, el checkout falla y el bloqueo se reporta.
 - La ejecución CI puede no estar disponible desde esta integración; no se simula su resultado.
@@ -74,9 +88,11 @@ Un test fallido, omitido, o sin artefacto no cuenta como aprobación. Un test si
 - No se cambia código funcional de CatedralX ni Agents.
 - No se fusiona `work` a `main`, no se crean ramas auxiliares y no se despliega.
 
-## 7. Base de diseño y referencias
+## 8. Base de diseño y referencias
 
 - W3C Trace Context: estándar de propagación interoperable de `traceparent`/`tracestate`, https://www.w3.org/TR/trace-context/
+- Pytest `tmp_path`: aislamiento de archivos temporales por prueba, https://docs.pytest.org/en/stable/how-to/tmp_path.html
+- Python Cryptography Ed25519: verificación de firma y excepción ante firmas inválidas, https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ed25519/
 - NIST SP 800-228 (actualizado 2026-03-13): riesgos y controles de protección de APIs en pre-runtime y runtime, https://csrc.nist.gov/pubs/sp/800/228/upd1/final
 - GitHub Actions: dependencias por SHA y jobs secuenciados, https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles y https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/using-jobs-in-a-workflow
 
