@@ -156,6 +156,54 @@ def _verify_evaluation_hash_via_cli(evaluation: dict, kind: str) -> str | None:
             os.remove(temp_path)
 
 
+def _verify_result_store_record_via_cli(decision: dict) -> str | None:
+    """Verify the persisted DecisionResult envelope and bind it to the worker copy."""
+    import subprocess
+    import tempfile
+
+    result_id = decision.get("result_id")
+    if not isinstance(result_id, str) or not result_id.strip():
+        return "decision_result_store_id_missing"
+    fd, temp_path = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(decision, stream, ensure_ascii=False, allow_nan=False)
+        allowed = (
+            "CATEDRALX_PATH", "CATEDRALX_PYTHON", "CATEDRALX_RESULT_STORE_PATH",
+            "PATH", "PYTHONPATH", "HOME", "TMPDIR",
+        )
+        env = {key: value for key, value in os.environ.items() if key in allowed}
+        env["CATEDRALX_PYTHON"] = sys.executable
+        result = subprocess.run(
+            [
+                "bash", "BIN/catedral", "verify-result-store",
+                "--result-id", result_id, "--expected-file", temp_path,
+            ],
+            cwd=_catedral_repo(), env=env, capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+        if result.returncode != 0:
+            return "decision_result_store_integrity_verification_failed"
+        try:
+            report = json.loads(result.stdout.strip())
+        except (ValueError, TypeError):
+            return "decision_result_store_integrity_verification_failed"
+        if (
+            not isinstance(report, dict)
+            or report.get("valid") is not True
+            or report.get("result_id") != result_id
+            or not isinstance(report.get("record_hash"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", report["record_hash"])
+        ):
+            return "decision_result_store_integrity_verification_failed"
+        return None
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        return "decision_result_store_integrity_verification_failed"
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def _run_catedralx(payload: dict) -> dict:
     """Ejecuta CatedralX con datos observados y su procedencia original."""
     import math
@@ -363,6 +411,12 @@ def _run_catedralx(payload: dict) -> dict:
 
         # Recalcular siempre el hash con el verificador canónico de CatedralX.
         failure = _verify_evaluation_hash_via_cli(evaluation, "central")
+        if failure is not None:
+            return {"status": "BLOCKED", "reason": failure}
+
+        # Independently verify the append-only ResultStore envelope and ensure
+        # the record persisted by CatedralX is byte-semantically the worker copy.
+        failure = _verify_result_store_record_via_cli(decision)
         if failure is not None:
             return {"status": "BLOCKED", "reason": failure}
         return decision
