@@ -107,3 +107,15 @@ Para el E2E, usar datos controlados con procedencia documentada antes de usar da
 ## 9. Referencia de arquitectura
 
 Consultar [ARQUITECTURA_CANONICA_CATEDRALX_AGENTS.md](./ARQUITECTURA_CANONICA_CATEDRALX_AGENTS.md).
+
+
+## 10. Estándares de referencia para el contrato futuro
+
+Estos estándares orientan el diseño; no significan que estén implementados en Chalamandra:
+
+- [W3C PROV-O](https://www.w3.org/TR/prov-o/): representar cada puntuación como entidad generada por una actividad, derivada de entidades de datos y atribuida a un agente/propietario responsable.
+- [OpenLineage Object Model](https://openlineage.io/docs/spec/object-model/): separar Job, Run y Dataset; registrar linaje de diseño y de ejecución, entradas, salidas, esquema y versión.
+- [OpenLineage Facets](https://openlineage.io/docs/spec/facets/): versionar el esquema de metadatos con una URL inmutable, no con una rama mutable.
+- [OpenTelemetry Context Propagation](https://opentelemetry.io/docs/concepts/context-propagation/): propagar trace/span context para correlacionar llamadas entre procesos. Una traza correlaciona ejecución; no sustituye linaje ni procedencia del dato.
+
+El contrato de gobernanza debería enlazar dos cadenas independientes: **linaje de datos** (qué datos y transformación generaron una puntuación) y **trazabilidad de ejecución** (qué solicitud y procesos transportaron/evaluaron esa puntuación).
