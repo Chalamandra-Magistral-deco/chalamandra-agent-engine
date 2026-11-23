@@ -47,6 +47,7 @@ jobs:
       - name: Run every test (fail closed)
         env:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
+          CATEDRALX_HORMONAS_HMAC_KEY: "ci-only-catedralx-hormones-hmac-key-2026"
         run: python -m pytest -q --ignore=CatedralX --junitxml=junit-agents.xml
 
       - name: Ruff lint gate
@@ -155,6 +156,7 @@ jobs:
             --publish 127.0.0.1:8766:8766 \
             --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CATEDRALX_HORMONAS_HMAC_KEY="$integrity_key" \
             --env CHALAMANDRA_JWT_SECRET="$jwt_secret" \
             --env CHALAMANDRA_CATEDRALX_JWT_SECRET="$service_secret" \
             --env CHALAMANDRA_API_ENABLE_MODEL_CALLS=false \
@@ -211,6 +213,7 @@ jobs:
             --volume "$GITHUB_WORKSPACE/verifier:/app/verifier:ro" \
             --env CHALAMANDRA_STATE_DIR=/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CATEDRALX_HORMONAS_HMAC_KEY="$integrity_key" \
             --env CHALAMANDRA_JWT_SECRET="$jwt_secret" \
             --env CHALAMANDRA_CATEDRALX_JWT_SECRET="$service_secret" \
             --env CHALAMANDRA_WEBHOOK_SECRET="$webhook_secret" \
