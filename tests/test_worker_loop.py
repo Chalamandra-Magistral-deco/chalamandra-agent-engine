@@ -1223,3 +1223,40 @@ def test_result_store_integrity_verifier_fails_closed(monkeypatch, tmp_path):
     assert worker_loop._verify_result_store_record_via_cli(canonical) == (
         "decision_result_store_integrity_verification_failed"
     )
+
+def test_result_store_worker_bridge_executes_canonical_cli(monkeypatch, tmp_path):
+    import sys
+
+    catedralx_root = Path(os.environ["CATEDRALX_PATH"]).resolve()
+    elite = str(catedralx_root / "elite")
+    if elite not in sys.path:
+        sys.path.insert(0, elite)
+    from contracts.result_store import append_result
+
+    store = tmp_path / "results.jsonl"
+    monkeypatch.setenv("CATEDRALX_RESULT_STORE_PATH", str(store))
+    record = {
+        "result_id": "0123456789abcdef0123456789abcdef",
+        "status": "UNCERTAIN",
+        "engine": "CatedralX",
+        "decision": "hold",
+        "evaluation_hash": "a" * 64,
+        "evaluation_gate": "BLOCKED_UNCERTAINTY",
+        "cycle_id": None,
+        "evidence": [],
+        "assumptions": [],
+        "risks": [],
+        "provenance": [],
+        "trace_id": "1234567890abcdef1234567890abcdef",
+        "analysis_only": True,
+        "orders_created": False,
+        "orders_executed": False,
+    }
+    append_result(record, store)
+    assert worker_loop._verify_result_store_record_via_cli(record) is None
+
+    altered = dict(record)
+    altered["decision"] = "buy"
+    assert worker_loop._verify_result_store_record_via_cli(altered) == (
+        "decision_result_store_integrity_verification_failed"
+    )
