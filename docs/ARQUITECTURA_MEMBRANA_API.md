@@ -88,3 +88,17 @@ NIST SP 800-228 recomienda autorización granular por identidad de usuario/servi
 La documentación se basa en lectura estática de `api/server.py`, `api/task_contracts.py`, `api/worker_loop.py`, `api/candidate_store.py` y los contratos/artefactos de aceptación relacionados, más la auditoría de integración registrada en CHA-12.
 
 **Clasificación:** implementación identificada en código; pruebas aisladas/sintéticas identificadas en la auditoría; runtime entre CatedralX y Agents no verificado en esta actualización. No se ejecutaron servicios, no se usaron credenciales y no se hizo deploy.
+
+## Verificación de integridad de almacenamiento del DecisionResult
+
+En la ruta central, la Membrana API no debe tratar `evaluation_hash` como prueba de integridad del almacenamiento:
+
+1. CatedralX persiste `DecisionResult` en ResultStore como envelope JSONL con `store_integrity` (secuencia, hash previo, tipo, ID, hash de contenido y hash del registro) y checkpoint lateral `.head`.
+2. El worker valida `evaluation_hash` con el verificador canónico de CatedralX.
+3. Después, Agents invoca `BIN/catedral verify-result-store --result-id ... --expected-file ...`.
+4. El CLI llama `verify_result_record`, verifica toda la cadena y el checkpoint local bajo bloqueo compartido, localiza el `result_id` y compara el contenido persistido con la copia recibida.
+5. Cualquier discrepancia, ausencia o fallo de verificación bloquea la publicación del candidato.
+
+Los dos controles son distintos y acumulativos: `evaluation_hash` protege el contenido de evaluación; `store_integrity` protege la secuencia y persistencia del registro. El checkpoint es local: no prueba resistencia frente a un atacante que controle simultáneamente el JSONL y el sidecar.
+
+Alcance actual: `DecisionResult` central. No se extiende a `EconomicOpportunityResult` hasta implementar y probar su persistencia y verificación de envelope de forma explícita.
