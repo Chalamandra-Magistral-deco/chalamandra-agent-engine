@@ -1057,6 +1057,10 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
 
     real_run = subprocess.run
     decision = _real_central_decision_result(monkeypatch, tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv(
+        "CATEDRALX_RESULT_STORE_PATH", str(tmp_path / "catedralx-state" / "results.jsonl")
+    )
 
     def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
         if "verify-evaluation-hash" in args or "verify-result-store" in args:
