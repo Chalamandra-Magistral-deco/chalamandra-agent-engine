@@ -134,6 +134,10 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
 
     def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
         captured.update(env=env.copy(), cwd=cwd, timeout=timeout)
+        if "verify-result-store" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps({
+                "valid": True, "result_id": "canonical-result", "record_hash": "c" * 64,
+            }), "")
         snapshot_path = Path(env["CATEDRALX_SNAPSHOT_PATH"])
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         assert snapshot["PERCEIVE"]["source"] == "test_verified_feed"
@@ -827,6 +831,10 @@ def test_catedralx_snapshot_is_signed_when_key_configured(monkeypatch, tmp_path)
 
     def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
         captured.update(env=env.copy())
+        if "verify-result-store" in args:
+            return subprocess.CompletedProcess(args, 0, json.dumps({
+                "valid": True, "result_id": "canonical-result", "record_hash": "c" * 64,
+            }), "")
         captured["snapshot"] = json.loads(
             Path(env["CATEDRALX_SNAPSHOT_PATH"]).read_text(encoding="utf-8")
         )
@@ -1051,7 +1059,7 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
     decision = _real_central_decision_result(monkeypatch, tmp_path)
 
     def fake_run(args, *, cwd, env, capture_output, text, timeout, check=False):
-        if "verify-evaluation-hash" in args:
+        if "verify-evaluation-hash" in args or "verify-result-store" in args:
             return real_run(
                 args, cwd=cwd, env=env, capture_output=capture_output,
                 text=text, timeout=timeout, check=check,
