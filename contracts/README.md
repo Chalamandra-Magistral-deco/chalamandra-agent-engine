@@ -29,3 +29,10 @@ lookup. Runtime checks in `verifier/independent_acceptance_verifier.py` and
 `api/acceptance_store.py` remain authoritative for verifier identity, operator confirmation,
 signature verification, candidate lookup, evidence digest recomputation, and
 persistence/idempotency rules. The schema is not loaded dynamically by the API process.
+
+## Normative references
+
+- [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/) — schema dialect and validation vocabulary.
+- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — EdDSA and Ed25519; an Ed25519 signature is 64 octets (128 hexadecimal characters).
+- [W3C Trace Context](https://www.w3.org/TR/trace-context/) — the `trace-id` is 16 bytes / 32 lowercase hexadecimal characters; all-zero is invalid.
+- [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) — JSON Canonicalization Scheme. Agents currently uses its repository-specific `json.dumps` serialization in `api/crypto_signer.py`; this implementation is not claimed to conform to JCS.
