@@ -39,6 +39,10 @@ CANONICAL_FIELDS = (
     "trace_id",
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TRACE_ID_RE = re.compile(r"^(?!0{32}$)[0-9a-f]{32}$")
+RFC3339_RE = re.compile(
+    r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+)
 
 
 def validate_decision(decision: Any, *, verifier_id: str) -> dict[str, Any]:
@@ -83,6 +87,9 @@ def validate_decision(decision: Any, *, verifier_id: str) -> dict[str, Any]:
     if decision["verifier_id"] != verifier_id:
         raise ValueError("verifier_identity_mismatch")
 
+    if not TRACE_ID_RE.fullmatch(decision["trace_id"]):
+        raise ValueError("trace_id_must_be_nonzero_w3c_trace_id")
+
     if not isinstance(decision["evidence_digest"], str) or not SHA256_RE.fullmatch(
         decision["evidence_digest"]
     ):
@@ -100,6 +107,8 @@ def validate_decision(decision: Any, *, verifier_id: str) -> dict[str, Any]:
 
     try:
         timestamp = decision["decided_at"]
+        if not RFC3339_RE.fullmatch(timestamp):
+            raise ValueError("decided_at_must_be_rfc3339_date_time")
         parsed = datetime.fromisoformat(
             timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
         )
