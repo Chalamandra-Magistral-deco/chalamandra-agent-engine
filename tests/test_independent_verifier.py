@@ -26,7 +26,7 @@ def _decision():
         "verifier_id": "isolated-test-verifier",
         "evidence_digest": "a" * 64,
         "decided_at": "2026-10-28T12:00:00+00:00",
-        "trace_id": "trace-isolated-1",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
     }
 
 
