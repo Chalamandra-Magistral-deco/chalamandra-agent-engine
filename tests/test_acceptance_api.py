@@ -464,7 +464,7 @@ def test_legacy_shared_hmac_signature_is_rejected(api_server, monkeypatch):
 def test_acceptance_with_tampered_field_fails(api_server):
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
-    payload["reasons"] = ["tampered after signing"]
+    payload["criteria_checked"] = ["schema_tampered_after_signing"]
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
