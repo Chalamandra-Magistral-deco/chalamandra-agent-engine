@@ -1,0 +1,13 @@
+{
+  "decision_id": "decision-fixture-rejected-001",
+  "candidate_id": "candidate-fixture-002",
+  "outcome": "rejected",
+  "criteria_checked": [],
+  "reasons": ["evidence_digest_mismatch"],
+  "missing_evidence": ["source_provenance"],
+  "verifier_id": "independent-verifier-fixture",
+  "evidence_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "decided_at": "2026-11-26T12:05:00Z",
+  "trace_id": "abcdef1234567890abcdef1234567890",
+  "signature": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}
