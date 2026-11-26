@@ -79,6 +79,10 @@ def _validate_decision_shape(decision: dict[str, Any]) -> None:
     missing = [field for field in _CANONICAL_FIELDS if field not in decision]
     if missing:
         raise ValueError("Campos canónicos de aceptación faltantes: " + ", ".join(missing))
+    allowed_fields = set(_CANONICAL_FIELDS) | {"signature"}
+    unexpected = sorted(set(decision) - allowed_fields)
+    if unexpected:
+        raise ValueError("Campos no permitidos en Acceptance: " + ", ".join(unexpected))
     for field in ("decision_id", "candidate_id", "verifier_id", "evidence_digest", "trace_id", "decided_at"):
         if not isinstance(decision[field], str) or not decision[field].strip():
             raise ValueError(f"{field} debe ser texto no vacío")
@@ -90,8 +94,20 @@ def _validate_decision_shape(decision: dict[str, Any]) -> None:
         raise ValueError("outcome debe ser accepted o rejected")
     for field in ("criteria_checked", "reasons", "missing_evidence"):
         value = decision[field]
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-            raise ValueError(f"{field} debe ser una lista de textos")
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise ValueError(f"{field} debe ser una lista de textos no vacíos")
+    if decision["outcome"] == "accepted":
+        if not decision["criteria_checked"] or decision["reasons"] or decision["missing_evidence"]:
+            raise ValueError("accepted requiere criterios y no admite reasons ni missing_evidence")
+    elif not decision["reasons"] and not decision["missing_evidence"]:
+        raise ValueError("rejected requiere reasons o missing_evidence")
+    if "signature" in decision and (
+        not isinstance(decision["signature"], str)
+        or not re.fullmatch(r"[0-9a-fA-F]{128}", decision["signature"])
+    ):
+        raise ValueError("signature debe ser una firma Ed25519 hexadecimal de 128 caracteres")
     try:
         timestamp = decision["decided_at"]
         parsed = datetime.fromisoformat(timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp)
