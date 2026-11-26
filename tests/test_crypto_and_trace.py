@@ -24,7 +24,7 @@ def get_base_record():
         "candidate_id": "cand-1",
         "outcome": "accepted",
         "evidence_digest": "a" * 64,
-        "trace_id": "tid-1",
+        "trace_id": "1234567890abcdef1234567890abcdef",
         "verifier_id": "test-verifier",
         "decision_id": "d1",
         "criteria_checked": ["evidence_digest", "traceability"],
