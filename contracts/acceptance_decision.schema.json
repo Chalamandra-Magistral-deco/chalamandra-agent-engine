@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Chalamandra-Magistral-deco/chalamandra-agent-engine/blob/main/contracts/acceptance_decision.schema.json",
+  "title": "Agents Acceptance Decision Envelope",
+  "description": "Signed Acceptance envelope persisted by Agents. The signature covers only the ten canonical decision fields; signature itself is excluded from the signed payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision_id",
+    "candidate_id",
+    "outcome",
+    "criteria_checked",
+    "reasons",
+    "missing_evidence",
+    "verifier_id",
+    "evidence_digest",
+    "decided_at",
+    "trace_id",
+    "signature"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "candidate_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "rejected"
+      ]
+    },
+    "criteria_checked": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "verifier_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "evidence_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^(?!0{32}$)[0-9a-f]{32}$"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "accepted"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "properties": {
+          "criteria_checked": {
+            "minItems": 1
+          },
+          "reasons": {
+            "maxItems": 0
+          },
+          "missing_evidence": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "rejected"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "reasons": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "properties": {
+              "missing_evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
