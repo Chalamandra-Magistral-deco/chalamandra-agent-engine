@@ -101,3 +101,38 @@ def test_invalid_signature_in_duplicate_group_fails_closed(monkeypatch, tmp_path
     with patch("api.acceptance_store._acceptance_file", return_value=path):
         with pytest.raises(ValueError, match="Firma Ed25519 inválida"):
             acceptance_store.get_acceptance("candidate-duplicate-test")
+
+
+
+def test_acceptance_store_shape_matches_published_wire_contract():
+    key = SigningKey(bytes.fromhex("55" * 32))
+    at = datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    valid = _signed_record(key, decision_id="decision-shape", decided_at=at)
+    acceptance_store._validate_decision_shape(valid)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda row: row.update({"unexpected": "field"}), "no permitidos"),
+        (lambda row: row.update({"signature": "A" * 128}), "signature"),
+        (lambda row: row.update({"criteria_checked": [" "]}), "criteria_checked"),
+        (lambda row: row.update({"decided_at": "2026-10-28 18:00:00+00:00"}), "RFC3339"),
+        (lambda row: row.pop("signature"), "faltantes"),
+    ],
+    ids=[
+        "reject-extra-property",
+        "reject-uppercase-signature",
+        "reject-blank-array-item",
+        "reject-non-rfc3339-timestamp",
+        "require-signature-field",
+    ],
+)
+def test_acceptance_store_rejects_records_outside_schema(mutation, message):
+    key = SigningKey(bytes.fromhex("66" * 32))
+    at = datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    record = _signed_record(key, decision_id="decision-invalid-shape", decided_at=at)
+    mutation(record)
+
+    with pytest.raises(ValueError, match=message):
+        acceptance_store._validate_decision_shape(record)
