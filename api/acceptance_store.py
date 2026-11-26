@@ -18,7 +18,11 @@ _CANONICAL_FIELDS = (
     "decision_id", "candidate_id", "outcome", "criteria_checked", "reasons",
     "missing_evidence", "verifier_id", "evidence_digest", "decided_at", "trace_id",
 )
-_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_TRACE_ID_RE = re.compile(r"^(?!0{32}$)[0-9a-f]{32}$")
+_RFC3339_RE = re.compile(
+    r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+)
+_ALLOWED_FIELDS = frozenset((*_CANONICAL_FIELDS, "signature"))
 
 
 def _state_dir() -> Path:
@@ -76,9 +80,14 @@ def _read_all(path: Path) -> list[dict[str, Any]]:
 
 
 def _validate_decision_shape(decision: dict[str, Any]) -> None:
-    missing = [field for field in _CANONICAL_FIELDS if field not in decision]
+    missing = [field for field in (*_CANONICAL_FIELDS, "signature") if field not in decision]
     if missing:
-        raise ValueError("Campos canónicos de aceptación faltantes: " + ", ".join(missing))
+        raise ValueError("Campos de aceptación faltantes: " + ", ".join(missing))
+    extras = sorted(set(decision) - _ALLOWED_FIELDS)
+    if extras:
+        raise ValueError("Campos de aceptación no permitidos: " + ", ".join(extras))
+    if not isinstance(decision["signature"], str) or not re.fullmatch(r"[0-9a-f]{128}", decision["signature"]):
+        raise ValueError("signature debe ser una firma Ed25519 hexadecimal minúscula de 128 caracteres")
     for field in ("decision_id", "candidate_id", "verifier_id", "evidence_digest", "trace_id", "decided_at"):
         if not isinstance(decision[field], str) or not decision[field].strip():
             raise ValueError(f"{field} debe ser texto no vacío")
@@ -86,14 +95,16 @@ def _validate_decision_shape(decision: dict[str, Any]) -> None:
         raise ValueError("trace_id debe ser un W3C trace ID de 32 caracteres hexadecimales no-cero")
     if not re.fullmatch(r"[0-9a-f]{64}", decision["evidence_digest"]):
         raise ValueError("evidence_digest debe ser SHA-256 hexadecimal de 64 caracteres")
-    if decision["outcome"] not in {"accepted", "rejected"}:
+    if not isinstance(decision["outcome"], str) or decision["outcome"] not in {"accepted", "rejected"}:
         raise ValueError("outcome debe ser accepted o rejected")
     for field in ("criteria_checked", "reasons", "missing_evidence"):
         value = decision[field]
-        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
             raise ValueError(f"{field} debe ser una lista de textos")
     try:
         timestamp = decision["decided_at"]
+        if not _RFC3339_RE.fullmatch(timestamp):
+            raise ValueError("decided_at debe cumplir RFC3339")
         parsed = datetime.fromisoformat(timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp)
     except (TypeError, ValueError) as exc:
         raise ValueError("decided_at debe ser una fecha ISO-8601 con zona horaria") from exc
