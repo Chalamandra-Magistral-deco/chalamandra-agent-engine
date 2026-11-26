@@ -22,7 +22,10 @@ python -m pip install -e '.[dev]'
 pytest -q tests/test_acceptance_contract_schema.py
 ```
 
-The JSON Schema validates structure and declared conditional rules. Runtime checks in
-`verifier/independent_acceptance_verifier.py` and `api/acceptance_store.py` remain
-authoritative for verifier identity, operator confirmation, signature verification,
-candidate lookup, evidence digest recomputation, and persistence/idempotency rules.
+The JSON Schema validates structure and declared conditional rules in the contract test suite.
+The API acceptance store also now rejects unmodeled envelope fields, empty list items, invalid
+accepted/rejected combinations, and malformed Ed25519 signature encodings before candidate
+lookup. Runtime checks in `verifier/independent_acceptance_verifier.py` and
+`api/acceptance_store.py` remain authoritative for verifier identity, operator confirmation,
+signature verification, candidate lookup, evidence digest recomputation, and
+persistence/idempotency rules. The schema is not loaded dynamically by the API process.
