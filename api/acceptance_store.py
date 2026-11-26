@@ -20,7 +20,7 @@ _CANONICAL_FIELDS = (
 )
 _TRACE_ID_RE = re.compile(r"^(?!0{32}$)[0-9a-f]{32}$")
 _RFC3339_RE = re.compile(
-    r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
 _ALLOWED_FIELDS = frozenset((*_CANONICAL_FIELDS, "signature"))
 
