@@ -1,0 +1,13 @@
+{
+  "decision_id": "decision-fixture-accepted-001",
+  "candidate_id": "candidate-fixture-001",
+  "outcome": "accepted",
+  "criteria_checked": ["schema_valid", "evidence_digest_matches", "trace_id_matches"],
+  "reasons": [],
+  "missing_evidence": [],
+  "verifier_id": "independent-verifier-fixture",
+  "evidence_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "decided_at": "2026-11-26T12:00:00Z",
+  "trace_id": "1234567890abcdef1234567890abcdef",
+  "signature": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}
