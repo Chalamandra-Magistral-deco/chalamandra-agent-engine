@@ -8,6 +8,31 @@ import pytest
 from api import worker_loop
 from conftest import sign_market_payload
 
+def _seal_decision_result(record):
+    import hashlib
+
+    payload = {
+        key: value for key, value in record.items()
+        if key not in {"contract_hash", "store_integrity"}
+    }
+    def canonical(value):
+        return json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    record["contract_hash"] = hashlib.sha256(canonical(payload)).hexdigest()
+    chain = {
+        "sequence": 1,
+        "previous_record_hash": "0" * 64,
+        "contract_hash": record["contract_hash"],
+        "result_id": record["result_id"],
+    }
+    record["store_integrity"] = {
+        **{key: chain[key] for key in ("sequence", "previous_record_hash")},
+        "record_hash": hashlib.sha256(canonical(chain)).hexdigest(),
+    }
+    return record
+
+
 
 def _economic_evaluation_payload():
     prices = [100.0 + index * 0.01 for index in range(30)]
@@ -160,6 +185,8 @@ def test_catedralx_subprocess_uses_worker_python(monkeypatch, tmp_path):
                 "orders_executed": False,
             },
         }
+        if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+            output["decision_result"] = _seal_decision_result(output["decision_result"])
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
@@ -322,6 +349,8 @@ def test_catedralx_blocks_decision_result_with_mismatched_trace(monkeypatch, tmp
                 "analysis_only": True, "orders_created": False, "orders_executed": False,
             }
         }
+        if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+            output["decision_result"] = _seal_decision_result(output["decision_result"])
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(worker_loop, "_catedral_repo", lambda: tmp_path)
@@ -850,6 +879,8 @@ def test_catedralx_snapshot_is_signed_when_key_configured(monkeypatch, tmp_path)
                 "orders_executed": False,
             },
         }
+        if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+            output["decision_result"] = _seal_decision_result(output["decision_result"])
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(
@@ -999,7 +1030,7 @@ def _real_central_decision_result(monkeypatch, tmp_path):
     assert completed.returncode == 0, completed.stderr
     parsed = json.loads(completed.stdout)
     assert isinstance(parsed.get("decision_result"), dict)
-    return parsed["decision_result"]
+    return _seal_decision_result(parsed["decision_result"])
 
 
 def test_verify_evaluation_hash_via_cli_opportunity(monkeypatch, tmp_path):
@@ -1057,6 +1088,8 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
                 text=text, timeout=timeout, check=check,
             )
         output = {"status": "ANALYSIS_COMPLETE", "decision_result": decision}
+        if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+            output["decision_result"] = _seal_decision_result(output["decision_result"])
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -1094,6 +1127,8 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
                     text=text, timeout=timeout, check=check,
                 )
             output = {"status": "ANALYSIS_COMPLETE", "decision_result": candidate}
+            if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+                output["decision_result"] = _seal_decision_result(output["decision_result"])
             return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
         return fake_run_candidate
 
@@ -1128,6 +1163,8 @@ def test_catedralx_general_route_blocks_tampered_evaluation(monkeypatch, tmp_pat
                 text=text, timeout=timeout, check=check,
             )
         output = {"status": "ANALYSIS_COMPLETE", "decision_result": tampered}
+        if isinstance(output, dict) and isinstance(output.get("decision_result"), dict):
+            output["decision_result"] = _seal_decision_result(output["decision_result"])
         return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
 
     monkeypatch.setattr(subprocess, "run", fake_run_tampered)
