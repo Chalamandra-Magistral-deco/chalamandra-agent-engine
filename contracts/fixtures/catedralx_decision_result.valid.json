@@ -1,0 +1,24 @@
+{
+  "result_id": "result-fixture-001",
+  "status": "ACCEPTED",
+  "engine": "CatedralX",
+  "decision": "Fixture only: analytical result, not a command or execution.",
+  "evidence": [
+    {
+      "type": "fixture",
+      "reference": "not-real-evidence"
+    }
+  ],
+  "assumptions": [],
+  "risks": [],
+  "provenance": [
+    "fixture-only"
+  ],
+  "trace_id": "1234567890abcdef1234567890abcdef",
+  "analysis_only": true,
+  "orders_created": false,
+  "orders_executed": false,
+  "evaluation_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "evaluation_gate": "ACCEPTED",
+  "cycle_id": "fixture-cycle-001"
+}

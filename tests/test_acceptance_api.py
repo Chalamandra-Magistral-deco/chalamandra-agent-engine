@@ -464,7 +464,7 @@ def test_legacy_shared_hmac_signature_is_rejected(api_server, monkeypatch):
 def test_acceptance_with_tampered_field_fails(api_server):
     payload = make_decision()
     payload["signature"] = sign_test_decision(payload)
-    payload["reasons"] = ["tampered after signing"]
+    payload["criteria_checked"] = ["schema_tampered_after_signing"]
     status, body = _post(
         f"{api_server}/v1/acceptance",
         payload,
@@ -586,3 +586,24 @@ def test_disabling_subscription_preserves_public_record_fields(tmp_path):
     assert disabled["status"] == "disabled"
     assert disabled["updated_at"]
 
+def test_acceptance_rejects_unmodeled_signed_envelope_fields(api_server, tmp_path):
+    payload = make_decision()
+    payload["signature"] = sign_test_decision(payload)
+    payload["unmodeled_authority"] = True
+
+    with (
+        patch("api.acceptance_store._acceptance_file", return_value=tmp_path / "acceptance_store.jsonl"),
+        patch("api.candidate_store.get_candidate") as get_candidate,
+        patch("api.webhook_dispatcher.dispatch_event") as dispatch,
+    ):
+        status, body = _post(
+            f"{api_server}/v1/acceptance",
+            payload,
+            {"Authorization": f"Bearer {make_jwt(subject='independent-test-verifier')}"},
+        )
+
+    assert status == 400
+    assert "Campos no permitidos" in body["error"]
+    assert not (tmp_path / "acceptance_store.jsonl").exists()
+    get_candidate.assert_not_called()
+    dispatch.assert_not_called()
