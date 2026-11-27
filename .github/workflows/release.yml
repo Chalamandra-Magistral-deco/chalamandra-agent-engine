@@ -47,6 +47,8 @@ jobs:
       - name: Run every test (fail closed)
         env:
           CATEDRALX_PATH: ${{ github.workspace }}/CatedralX
+          # Ephemeral test-only key; never used by production deployments.
+          CATEDRALX_HORMONAS_HMAC_KEY: "ci-only-catedralx-hormones-hmac-key-2026"
         run: python -m pytest -q --ignore=CatedralX --junitxml=junit-agents.xml
 
       - name: Ruff lint gate
@@ -140,6 +142,7 @@ jobs:
           set -euo pipefail
           # Disposable CI-only credentials; never reuse outside this isolated smoke test.
           integrity_key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          hormonas_hmac_key="ci-only-catedralx-hormones-hmac-key-2026"
           jwt_secret="$(printf '%s-%s' 'synthetic-smoke-jwt' 'secret-32-bytes-ok')"
           service_secret="synthetic-smoke-service-jwt-secret"
           webhook_secret="synthetic-smoke-webhook-secret-32-bytes-min"
@@ -155,6 +158,7 @@ jobs:
             --publish 127.0.0.1:8766:8766 \
             --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CATEDRALX_HORMONAS_HMAC_KEY="$hormonas_hmac_key" \
             --env CHALAMANDRA_JWT_SECRET="$jwt_secret" \
             --env CHALAMANDRA_CATEDRALX_JWT_SECRET="$service_secret" \
             --env CHALAMANDRA_API_ENABLE_MODEL_CALLS=false \
@@ -168,6 +172,7 @@ jobs:
             --network chalamandra-agents-ci \
             --volume chalamandra-agents-ci-state:/home/chalamandra/.local/state/chalamandra \
             --env CHALAMANDRA_CANDIDATE_HMAC_KEY="$integrity_key" \
+            --env CATEDRALX_HORMONAS_HMAC_KEY="$hormonas_hmac_key" \
             --env CHALAMANDRA_API_ENABLE_MODEL_CALLS=false \
             chalamandra-worker:ci
 
